@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: pdf2searchable-backend
+    environment:
+      - DATABASE_PATH=/app/data/jobs.db
+      - UPLOAD_DIR=/app/uploads
+    env_file: .env
+    volumes:
+      - uploads:/app/uploads
+      - data:/app/data
+      # NAS 挂载示例（部署时修改为实际路径）：
+      # - /mnt/nas/source:/mnt/nas_source:ro
+      # - /mnt/nas/dest:/mnt/nas_dest
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/health > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  nginx:
+    build: ./frontend
+    container_name: pdf2searchable-nginx
+    ports:
+      - "9008:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  uploads:
+  data:
