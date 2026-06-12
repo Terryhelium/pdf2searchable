@@ -5,18 +5,17 @@
 ```mermaid
 graph TB
     subgraph Client["🧑 用户端"]
-        WB["Windows 浏览器<br/>localhost:5173"]
+        WB["Windows 浏览器 localhost:5173"]
     end
 
     subgraph NginxLayer["🌐 Nginx 反向代理 (:9008)"]
-        direction LR
-        SPA["前端静态资源<br/>→ /usr/share/nginx/html"]
-        API["API 代理<br/>→ http://backend:8000"]
+        SPA["前端静态资源 /usr/share/nginx/html"]
+        API["API 代理 http://backend:8000"]
     end
 
     subgraph Backend["⚙️ FastAPI 后端 (:8000)"]
-        Router["API 路由层<br/>/api/*"]
-        Proc["OCRProcessor<br/>引擎调度 + 格式生成"]
+        Router["API 路由层 /api/*"]
+        Proc["OCRProcessor 引擎调度 + 格式生成"]
 
         subgraph Engines["OCR 引擎客户端"]
             POClient["PaddleOCRClient"]
@@ -32,13 +31,13 @@ graph TB
             FJSON["JSONFormatter"]
         end
 
-        Database[("SQLite<br/>jobs.db")]
-        Tasks["Tasks<br/>后台任务调度"]
+        Database[("SQLite jobs.db")]
+        Tasks["后台任务调度"]
     end
 
     subgraph OcrServers["🖥️ OCR 算力服务器 (10.19.26.153)"]
-        PO["PaddleOCR<br/>:8080"]
-        MU["MinerU<br/>:8000"]
+        PO["PaddleOCR :8080"]
+        MU["MinerU :8000"]
     end
 
     subgraph Storage["💾 持久化存储"]
@@ -47,9 +46,9 @@ graph TB
         Results[("目标目录/ 输出结果")]
     end
 
-    WB -->|"HTTP"| NginxLayer
+    WB --> NginxLayer
     NginxLayer -->|"/api/*"| Router
-    WB -->|"开发模式 :5173 直连"| Router
+    WB --> Router
 
     Router --> Proc
     Router --> Tasks
@@ -57,8 +56,8 @@ graph TB
 
     Proc --> POClient
     Proc --> MUClient
-    POClient -->|"HTTP POST /ocr"| PO
-    MUClient -->|"HTTP POST /api/v1/parse"| MU
+    POClient --> PO
+    MUClient --> MU
 
     Proc --> FPDF
     Proc --> FTIFF
@@ -93,15 +92,15 @@ graph TB
 ## 处理流水线
 
 ```mermaid
-flowchart TB
-    Start(["📄 用户上传文件<br/>或指定批量目录"]) --> CreateJob["创建 Job 记录<br/>写入 SQLite"]
+graph TB
+    Start(["用户上传文件 或 指定批量目录"]) --> CreateJob["创建 Job 记录 写入 SQLite"]
 
     CreateJob --> EngineSelect{"按需选择 OCR 引擎"}
 
-    EngineSelect -->|"格式包含 PDF"| PO_OCR["PaddleOCR<br/>返回: 文字 + 坐标 + 置信度"]
-    EngineSelect -->|"格式包含 MD/TXT"| MU_OCR["MinerU<br/>返回: 标题/表格/阅读顺序"]
-    EngineSelect -->|"格式包含 JSON"| Both["PaddleOCR + MinerU"]
-    EngineSelect -->|"仅 TIFF/JPEG"| NoOCR["不调用 OCR<br/>直接图像处理"]
+    EngineSelect -->|格式包含 PDF| PO_OCR["PaddleOCR 返回: 文字+坐标"]
+    EngineSelect -->|格式包含 MD/TXT| MU_OCR["MinerU 返回: 标题/表格/阅读顺序"]
+    EngineSelect -->|格式包含 JSON| Both["PaddleOCR + MinerU"]
+    EngineSelect -->|仅 TIFF/JPEG| NoOCR["不调用OCR 直接图像处理"]
 
     PO_OCR --> Merge["合并 OCR 结果"]
     MU_OCR --> Merge
@@ -111,13 +110,12 @@ flowchart TB
     Merge --> MultiFormat{"逐个格式生成"}
 
     subgraph FormatGen["格式生成"]
-        direction TB
-        F1["📕 PDFFormatter<br/>pypdf: 原图 + 文字覆盖层"]
-        F2["🖼️ TIFFFormatter<br/>Pillow: 多页 TIFF + LZW"]
-        F3["🖼️ JPEGFormatter<br/>Pillow: 逐页 JPEG 预览"]
-        F4["📃 TextFormatter<br/>按阅读顺序拼接纯文本"]
-        F5["📝 MarkdownFormatter<br/>MinerU 结构 → Markdown 语法"]
-        F6["📊 JSONFormatter<br/>完整数据 + 版式信息"]
+        F1["PDFFormatter pypdf: 原图+文字层"]
+        F2["TIFFFormatter Pillow: 多页TIFF+LZW"]
+        F3["JPEGFormatter Pillow: 逐页JPEG预览"]
+        F4["TextFormatter 按阅读顺序拼接"]
+        F5["MarkdownFormatter MinerU结构转MD"]
+        F6["JSONFormatter 完整数据+版式信息"]
     end
 
     MultiFormat -->|PDF| F1
@@ -127,10 +125,15 @@ flowchart TB
     MultiFormat -->|MD| F5
     MultiFormat -->|JSON| F6
 
-    F1 & F2 & F3 & F4 & F5 & F6 --> OutDir["写入对应格式子目录<br/>pdf/ tiff/ jpg/ txt/ md/ json/"]
+    F1 --> OutDir["写入对应格式子目录"]
+    F2 --> OutDir
+    F3 --> OutDir
+    F4 --> OutDir
+    F5 --> OutDir
+    F6 --> OutDir
 
-    OutDir --> UpdateStatus["更新 Job 状态 → done"]
-    UpdateStatus --> Done(["✅ 处理完成"])
+    OutDir --> UpdateStatus["更新 Job 状态"]
+    UpdateStatus --> Done(["处理完成"])
 
     classDef start fill:#e3f2fd,stroke:#1565c0,color:#1565c0
     classDef process fill:#fff3e0,stroke:#e65100,color:#e65100
@@ -154,32 +157,32 @@ flowchart TB
 ```mermaid
 graph RL
     subgraph API["API 层"]
-        Main["main.py<br/>路由 + 生命周期"]
+        Main["main.py 路由+生命周期"]
     end
 
     subgraph Core["核心逻辑"]
-        OCR["ocr.py<br/>OCRProcessor"]
-        Tasks["tasks.py<br/>后台任务"]
-        DB["db.py<br/>Database"]
+        OCR["ocr.py OCRProcessor"]
+        Tasks["tasks.py 后台任务"]
+        DB["db.py Database"]
     end
 
     subgraph Format["格式输出器"]
-        Init["formatters/__init__.py<br/>BaseFormatter + Registry"]
-        PDF["pdf.py<br/>SearchablePDFFormatter"]
-        TIFF["tiff.py<br/>TIFFFormatter"]
-        JPEG["jpeg.py<br/>JPEGFormatter"]
-        TXT["txt.py<br/>TextFormatter"]
-        MD["md.py<br/>MarkdownFormatter"]
-        JSON["json.py<br/>JSONFormatter"]
+        Init["formatters/__init__.py BaseFormatter"]
+        PDF["pdf.py SearchablePDFFormatter"]
+        TIFF["tiff.py TIFFFormatter"]
+        JPEG["jpeg.py JPEGFormatter"]
+        TXT["txt.py TextFormatter"]
+        MD["md.py MarkdownFormatter"]
+        JSON["json.py JSONFormatter"]
     end
 
     subgraph Config["配置"]
-        CFG["config.py<br/>Settings"]
-        ENV[".env<br/>环境变量"]
+        CFG["config.py Settings"]
+        ENV[".env 环境变量"]
     end
 
     subgraph Models["数据模型"]
-        MOD["models.py<br/>Pydantic Models"]
+        MOD["models.py Pydantic Models"]
     end
 
     Main --> OCR
@@ -191,7 +194,7 @@ graph RL
     Tasks --> OCR
     Tasks --> DB
 
-    OCR -->|"按需调用"| Init
+    OCR --> Init
     Init --> PDF
     Init --> TIFF
     Init --> JPEG
@@ -223,23 +226,23 @@ graph RL
 erDiagram
     jobs {
         str id PK "UUID"
-        str type "single | batch"
-        str status "pending | processing | done | failed"
+        str type "single or batch"
+        str status "pending processing done failed"
         str source_dir "批量源目录"
         str dest_dir "批量目标目录"
         int total_files "文件总数"
         int processed_files "已处理数"
         int error_count "错误数"
-        str formats "pdf,tiff,jpg,txt,md,json"
-        str created_at "ISO 时间戳"
-        str updated_at "ISO 时间戳"
+        str formats "pdf tiff jpg txt md json"
+        str created_at "ISO时间戳"
+        str updated_at "ISO时间戳"
     }
 
     job_files {
         int id PK "自增"
-        str job_id FK "关联 jobs.id"
+        str job_id FK "关联jobs.id"
         str filename "原始文件名"
-        str status "pending | done | failed"
+        str status "pending done failed"
         str error_msg "错误信息"
         str result_path "主输出文件路径"
     }
@@ -253,31 +256,31 @@ erDiagram
 
 ```mermaid
 graph TB
-    Dest["📂 目标目录"] --> pdf["📂 pdf/"]
-    Dest --> tiff["📂 tiff/"]
-    Dest --> jpg["📂 jpg/"]
-    Dest --> txt["📂 txt/"]
-    Dest --> md["📂 md/"]
-    Dest --> json["📂 json/"]
+    Dest["目标目录"] --> pdf["pdf/"]
+    Dest --> tiff["tiff/"]
+    Dest --> jpg["jpg/"]
+    Dest --> txt["txt/"]
+    Dest --> md["md/"]
+    Dest --> json["json/"]
 
-    pdf --> p1["📕 doc1_searchable.pdf"]
-    pdf --> p2["📕 doc2_searchable.pdf"]
+    pdf --> p1["doc1_searchable.pdf"]
+    pdf --> p2["doc2_searchable.pdf"]
 
-    tiff --> t1["🖼️ doc1.tiff"]
-    tiff --> t2["🖼️ doc2.tiff"]
+    tiff --> t1["doc1.tiff"]
+    tiff --> t2["doc2.tiff"]
 
-    jpg --> j1["🖼️ doc1_p1.jpg"]
-    jpg --> j2["🖼️ doc1_p2.jpg"]
-    jpg --> j3["🖼️ doc2_p1.jpg"]
+    jpg --> j1["doc1_p1.jpg"]
+    jpg --> j2["doc1_p2.jpg"]
+    jpg --> j3["doc2_p1.jpg"]
 
-    txt --> x1["📃 doc1.txt"]
-    txt --> x2["📃 doc2.txt"]
+    txt --> x1["doc1.txt"]
+    txt --> x2["doc2.txt"]
 
-    md --> m1["📝 doc1.md"]
-    md --> m2["📝 doc2.md"]
+    md --> m1["doc1.md"]
+    md --> m2["doc2.md"]
 
-    json --> s1["📊 doc1.json"]
-    json --> s2["📊 doc2.json"]
+    json --> s1["doc1.json"]
+    json --> s2["doc2.json"]
 
     classDef root fill:#fff3e0,stroke:#e65100,color:#e65100
     classDef dir fill:#e8f5e9,stroke:#2e7d32,color:#2e7d32
@@ -294,22 +297,22 @@ graph TB
 
 ```mermaid
 graph TB
-    App["App.tsx<br/>ConfigProvider + 主题管理"] --> Layout["AppLayout.tsx<br/>侧边栏 + 顶栏"]
-    Layout --> Nav["Sider<br/>导航菜单"]
-    Layout --> Header["Header<br/>折叠按钮 + 主题色 + 暗色切换"]
+    App["App.tsx ConfigProvider+主题管理"] --> Layout["AppLayout.tsx 侧边栏+顶栏"]
+    Layout --> Nav["Sider 导航菜单"]
+    Layout --> Header["Header 折叠按钮 主题色 暗色切换"]
 
-    Layout --> Dashboard["Dashboard.tsx<br/>仪表盘"]
-    Layout --> Upload["SingleUpload.tsx<br/>单文件上传"]
-    Layout --> Batch["BatchProcess.tsx<br/>批量处理"]
+    Layout --> Dashboard["Dashboard.tsx 仪表盘"]
+    Layout --> Upload["SingleUpload.tsx 单文件上传"]
+    Layout --> Batch["BatchProcess.tsx 批量处理"]
 
-    Upload --> FormatSel["FormatSelector<br/>输出格式选择"]
-    Upload --> Zone["UploadZone<br/>拖拽上传"]
-    Upload --> Jobs["JobList<br/>任务记录"]
+    Upload --> FormatSel["FormatSelector 输出格式选择"]
+    Upload --> Zone["UploadZone 拖拽上传"]
+    Upload --> Jobs["JobList 任务记录"]
 
     Batch --> FormatSel
-    Batch --> BForm["Form<br/>源/目标目录"]
-    Batch --> BList["List<br/>任务列表"]
-    Batch --> Detail["JobDetail<br/>任务详情 Modal"]
+    Batch --> BForm["Form 源/目标目录"]
+    Batch --> BList["List 任务列表"]
+    Batch --> Detail["JobDetail 任务详情 Modal"]
 
     classDef app fill:#e3f2fd,stroke:#1565c0,color:#1565c0
     classDef layout fill:#fff3e0,stroke:#e65100,color:#e65100
