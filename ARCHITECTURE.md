@@ -2,325 +2,199 @@
 
 ## 整体架构
 
-```mermaid
-graph TB
-    subgraph Client["🧑 用户端"]
-        WB["Windows 浏览器 localhost:5173"]
-    end
+系统采用前后端分离架构，浏览器通过 Nginx 反向代理访问前端静态资源和后端 API。后端 FastAPI 服务负责任务调度、OCR 引擎调用和多格式输出生成。
 
-    subgraph NginxLayer["🌐 Nginx 反向代理 (:9008)"]
-        SPA["前端静态资源 /usr/share/nginx/html"]
-        API["API 代理 http://backend:8000"]
-    end
+```
+┌──────────┐     ┌─────────────────────────────────────────┐
+│  Browser  │────▶│  Nginx (:9008)                          │
+│  React    │     │  /api/*  → backend:8000                 │
+│  Antd 6   │     │  /*      → 前端静态文件                  │
+└──────────┘     └──────────────┬──────────────────────────┘
+                                │
+                     ┌──────────▼──────────────────────────┐
+                     │  FastAPI Backend (:8000)              │
+                     │  ┌────────────────────────────────┐   │
+                     │  │ OCRProcessor                   │   │
+                     │  │  ├─ PaddleOCRClient → :8080    │   │
+                     │  │  └─ MinerUClient    → :8000    │   │
+                     │  ├─ Formatters (6种格式输出)       │   │
+                     │  └─ SQLite (jobs.db)               │   │
+                     │  └────────────────────────────────┘   │
+                     └──────────────────────────────────────┘
+```
 
-    subgraph Backend["⚙️ FastAPI 后端 (:8000)"]
-        Router["API 路由层 /api/*"]
-        Proc["OCRProcessor 引擎调度 + 格式生成"]
+### 技术栈
 
-        subgraph Engines["OCR 引擎客户端"]
-            POClient["PaddleOCRClient"]
-            MUClient["MinerUClient"]
-        end
+| 层 | 技术 | 说明 |
+|----|------|------|
+| 前端框架 | React 19 + TypeScript 6 | Vite 8 构建 |
+| UI 组件库 | Ant Design 6 | 6 种主题色 + 深色模式 |
+| 后端框架 | FastAPI 0.136 + Python 3.11 | uvicorn 运行 |
+| 数据库 | SQLite (aiosqlite) | 单机部署，无需额外服务 |
+| OCR 引擎 | PaddleOCR + MinerU | 独立 HTTP 服务，按需调用 |
+| 图像处理 | Pillow / pypdf / img2pdf | 格式转换和 PDF 生成 |
+| 部署 | Docker Compose + Nginx | 一键启动 |
 
-        subgraph Formatters["格式输出器"]
-            FPDF["PDFFormatter"]
-            FTIFF["TIFFFormatter"]
-            FJPG["JPEGFormatter"]
-            FTXT["TextFormatter"]
-            FMD["MarkdownFormatter"]
-            FJSON["JSONFormatter"]
-        end
+---
 
-        Database[("SQLite jobs.db")]
-        Tasks["后台任务调度"]
-    end
+## API 路由
 
-    subgraph OcrServers["🖥️ OCR 算力服务器 (10.19.26.153)"]
-        PO["PaddleOCR :8080"]
-        MU["MinerU :8000"]
-    end
+| 路由 | 方法 | 说明 |
+|------|------|------|
+| `/api/health` | GET | 健康检查，返回 PaddleOCR / MinerU 状态 |
+| `/api/stats` | GET | 统计数据：总任务数、今日、成功/失败/处理中 |
+| `/api/upload` | POST | 单文件上传，参数 `formats` 指定输出格式 |
+| `/api/jobs/{id}` | GET | 查询单个任务状态和结果 |
+| `/api/download/{id}/{file}` | GET | 下载处理结果文件 |
+| `/api/batch` | POST | 创建批量任务：源目录 + 目标目录 + 格式 |
+| `/api/batch` | GET | 批量任务列表 |
+| `/api/batch/{id}` | GET | 批量任务详情（含每个文件的处理状态） |
 
-    subgraph Storage["💾 持久化存储"]
-        DBFile[("data/jobs.db")]
-        Uploads[("uploads/ 临时文件")]
-        Results[("目标目录/ 输出结果")]
-    end
+---
 
-    WB --> NginxLayer
-    NginxLayer -->|"/api/*"| Router
-    WB --> Router
+## 处理流程
 
-    Router --> Proc
-    Router --> Tasks
-    Router <--> Database
+每个文件处理分为三步：
 
-    Proc --> POClient
-    Proc --> MUClient
-    POClient --> PO
-    MUClient --> MU
+**第一步：按需选择 OCR 引擎**
 
-    Proc --> FPDF
-    Proc --> FTIFF
-    Proc --> FJPG
-    Proc --> FTXT
-    Proc --> FMD
-    Proc --> FJSON
+根据请求的输出格式，决定调用哪个 OCR 引擎：
 
-    Database --> DBFile
-    Proc --> Uploads
-    Formatters --> Results
+| 请求格式 | 调用的引擎 | 原因 |
+|---------|-----------|------|
+| 可搜索 PDF | PaddleOCR | 需要精确的文字坐标做透明覆盖层 |
+| Markdown / TXT | MinerU | 需要文档结构理解（标题、表格、阅读顺序） |
+| JSON | PaddleOCR + MinerU | 保留完整原始数据 |
+| TIFF / JPEG | 不需要 OCR | 纯图像转换，跳过 OCR |
 
-    classDef client fill:#e3f2fd,stroke:#1565c0,color:#1565c0
-    classDef nginx fill:#fff3e0,stroke:#e65100,color:#e65100
-    classDef backend fill:#e8f5e9,stroke:#2e7d32,color:#2e7d32
-    classDef engine fill:#fce4ec,stroke:#c62828,color:#c62828
-    classDef format fill:#e8f5e9,stroke:#2e7d32,color:#2e7d32
-    classDef ocr fill:#f3e5f5,stroke:#6a1b9a,color:#6a1b9a
-    classDef storage fill:#f5f5f5,stroke:#616161,color:#616161
+**第二步：各格式写入独立子目录**
 
-    class WB client
-    class NginxLayer,SPA,API nginx
-    class Router,Proc,Tasks,Database backend
-    class POClient,MUClient engine
-    class FPDF,FTIFF,FJPG,FTXT,FMD,FJSON format
-    class PO,MU ocr
-    class DBFile,Uploads,Results storage
+目标目录下按格式创建子目录，同名文件写入对应子目录：
+
+```
+目标目录/
+├── pdf/   → document_searchable.pdf
+├── tiff/  → document.tiff
+├── jpg/   → document_p1.jpg, document_p2.jpg ...
+├── txt/   → document.txt
+├── md/    → document.md
+└── json/  → document.json
+```
+
+**第三步：更新数据库记录**
+
+处理完成后更新 jobs 表的状态、已处理文件数、错误数。
+
+---
+
+## 数据库设计
+
+### 表结构
+
+| 表名 | 用途 | 关键字段 |
+|------|------|---------|
+| `jobs` | 任务主表 | id, type(single/batch), status, formats, 统计数据 |
+| `job_files` | 任务文件明细 | filename, status, error_msg, result_path |
+
+### 表关系
+
+jobs 与 job_files 为一对多关系：一个批量任务包含多个文件，每个文件有独立的状态跟踪。
+
+### 任务状态流转
+
+```
+pending → processing → done
+                     → failed (全部失败)
+                     → done   (部分失败，error_count > 0)
 ```
 
 ---
 
-## 处理流水线
+## 后端模块
 
-```mermaid
-graph TB
-    Start(["用户上传文件 或 指定批量目录"]) --> CreateJob["创建 Job 记录 写入 SQLite"]
+```
+backend/
+├── app/
+│   ├── main.py           # FastAPI 应用入口，路由注册，生命周期
+│   ├── config.py         # 环境变量配置 (dataclass)
+│   ├── models.py         # Pydantic 请求/响应模型
+│   ├── db.py             # SQLite 数据库封装
+│   ├── ocr.py            # OCR引擎客户端 + OCRProcessor 调度器
+│   ├── tasks.py          # 后台任务：单文件处理、批量处理
+│   └── formatters/       # 格式输出器，每个格式一个模块
+│       ├── pdf.py        # 可搜索PDF生成
+│       ├── tiff.py       # TIFF归档输出
+│       ├── jpeg.py       # JPEG预览图
+│       ├── txt.py        # 纯文本提取
+│       ├── md.py         # Markdown结构化输出
+│       └── json.py       # JSON完整数据导出
+├── requirements.txt
+└── Dockerfile
+```
 
-    CreateJob --> EngineSelect{"按需选择 OCR 引擎"}
+### 模块依赖
 
-    EngineSelect -->|格式包含 PDF| PO_OCR["PaddleOCR 返回: 文字+坐标"]
-    EngineSelect -->|格式包含 MD/TXT| MU_OCR["MinerU 返回: 标题/表格/阅读顺序"]
-    EngineSelect -->|格式包含 JSON| Both["PaddleOCR + MinerU"]
-    EngineSelect -->|仅 TIFF/JPEG| NoOCR["不调用OCR 直接图像处理"]
-
-    PO_OCR --> Merge["合并 OCR 结果"]
-    MU_OCR --> Merge
-    Both --> Merge
-    NoOCR --> Merge
-
-    Merge --> MultiFormat{"逐个格式生成"}
-
-    subgraph FormatGen["格式生成"]
-        F1["PDFFormatter pypdf: 原图+文字层"]
-        F2["TIFFFormatter Pillow: 多页TIFF+LZW"]
-        F3["JPEGFormatter Pillow: 逐页JPEG预览"]
-        F4["TextFormatter 按阅读顺序拼接"]
-        F5["MarkdownFormatter MinerU结构转MD"]
-        F6["JSONFormatter 完整数据+版式信息"]
-    end
-
-    MultiFormat -->|PDF| F1
-    MultiFormat -->|TIFF| F2
-    MultiFormat -->|JPEG| F3
-    MultiFormat -->|TXT| F4
-    MultiFormat -->|MD| F5
-    MultiFormat -->|JSON| F6
-
-    F1 --> OutDir["写入对应格式子目录"]
-    F2 --> OutDir
-    F3 --> OutDir
-    F4 --> OutDir
-    F5 --> OutDir
-    F6 --> OutDir
-
-    OutDir --> UpdateStatus["更新 Job 状态"]
-    UpdateStatus --> Done(["处理完成"])
-
-    classDef start fill:#e3f2fd,stroke:#1565c0,color:#1565c0
-    classDef process fill:#fff3e0,stroke:#e65100,color:#e65100
-    classDef engine fill:#fce4ec,stroke:#c62828,color:#c62828
-    classDef format fill:#e8f5e9,stroke:#2e7d32,color:#2e7d32
-    classDef output fill:#f3e5f5,stroke:#6a1b9a,color:#6a1b9a
-    classDef end fill:#e8f5e9,stroke:#1b5e20,color:#1b5e20
-
-    class Start start
-    class CreateJob,EngineSelect,Merge,MultiFormat,NoOCR process
-    class PO_OCR,MU_OCR,Both engine
-    class F1,F2,F3,F4,F5,F6 format
-    class OutDir,UpdateStatus output
-    class Done end
+```
+main.py  →  ocr.py / tasks.py / db.py / models.py / config.py
+tasks.py →  ocr.py / db.py
+ocr.py   →  formatters/* (通过注册表自动发现)
+db.py    →  config.py
 ```
 
 ---
 
-## 模块依赖关系
+## 前端组件
 
-```mermaid
-graph RL
-    subgraph API["API 层"]
-        Main["main.py 路由+生命周期"]
-    end
-
-    subgraph Core["核心逻辑"]
-        OCR["ocr.py OCRProcessor"]
-        Tasks["tasks.py 后台任务"]
-        DB["db.py Database"]
-    end
-
-    subgraph Format["格式输出器"]
-        Init["formatters/__init__.py BaseFormatter"]
-        PDF["pdf.py SearchablePDFFormatter"]
-        TIFF["tiff.py TIFFFormatter"]
-        JPEG["jpeg.py JPEGFormatter"]
-        TXT["txt.py TextFormatter"]
-        MD["md.py MarkdownFormatter"]
-        JSON["json.py JSONFormatter"]
-    end
-
-    subgraph Config["配置"]
-        CFG["config.py Settings"]
-        ENV[".env 环境变量"]
-    end
-
-    subgraph Models["数据模型"]
-        MOD["models.py Pydantic Models"]
-    end
-
-    Main --> OCR
-    Main --> Tasks
-    Main --> DB
-    Main --> MOD
-    Main --> CFG
-
-    Tasks --> OCR
-    Tasks --> DB
-
-    OCR --> Init
-    Init --> PDF
-    Init --> TIFF
-    Init --> JPEG
-    Init --> TXT
-    Init --> MD
-    Init --> JSON
-
-    DB --> CFG
-    OCR --> CFG
-
-    classDef api fill:#e3f2fd,stroke:#1565c0,color:#1565c0
-    classDef core fill:#fff3e0,stroke:#e65100,color:#e65100
-    classDef fmt fill:#e8f5e9,stroke:#2e7d32,color:#2e7d32
-    classDef cfg fill:#f5f5f5,stroke:#616161,color:#616161
-    classDef mod fill:#f3e5f5,stroke:#6a1b9a,color:#6a1b9a
-
-    class Main api
-    class OCR,Tasks,DB core
-    class Init,PDF,TIFF,JPEG,TXT,MD,JSON fmt
-    class CFG,ENV cfg
-    class MOD mod
 ```
+frontend/src/
+├── App.tsx                # 根组件：主题管理 (ConfigProvider)
+├── main.tsx               # 入口
+├── api/
+│   └── client.ts          # Axios API 封装
+├── components/
+│   ├── AppLayout.tsx      # 侧边栏 + 顶栏布局
+│   ├── UploadZone.tsx     # 拖拽上传组件
+│   ├── FormatSelector.tsx # 输出格式多选框
+│   ├── JobList.tsx        # 任务列表
+│   └── JobDetail.tsx      # 任务详情（含文件级进度）
+└── pages/
+    ├── Dashboard.tsx      # 仪表盘：统计卡片 + 最近记录
+    ├── SingleUpload.tsx   # 单文件上传页
+    └── BatchProcess.tsx   # 批量处理页
+```
+
+### 页面功能
+
+**仪表盘**：进入系统默认页面，展示 6 个统计卡片（总文档数、今日处理、成功/失败/处理中、任务总数）和最近处理记录列表。
+
+**单文件上传**：选择输出格式 → 拖拽或点击上传 → 实时轮询处理状态 → 完成后显示下载链接。支持格式 PDF / TIFF / JPEG / TXT / MD / JSON。
+
+**批量处理**：选择输出格式 → 输入源目录和输出目录 → 创建任务 → 后台逐文件处理，可查看每个文件的状态和错误信息。
 
 ---
 
-## 数据库模型
+## 部署配置
 
-```mermaid
-erDiagram
-    jobs {
-        str id PK "UUID"
-        str type "single or batch"
-        str status "pending processing done failed"
-        str source_dir "批量源目录"
-        str dest_dir "批量目标目录"
-        int total_files "文件总数"
-        int processed_files "已处理数"
-        int error_count "错误数"
-        str formats "pdf tiff jpg txt md json"
-        str created_at "ISO时间戳"
-        str updated_at "ISO时间戳"
-    }
+### 环境变量
 
-    job_files {
-        int id PK "自增"
-        str job_id FK "关联jobs.id"
-        str filename "原始文件名"
-        str status "pending done failed"
-        str error_msg "错误信息"
-        str result_path "主输出文件路径"
-    }
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PADDLEOCR_URL` | `http://10.19.26.153:8080` | PaddleOCR 服务地址 |
+| `MINERU_URL` | `http://10.19.26.153:8000` | MinerU 服务地址 |
+| `BACKEND_PORT` | `8000` | 后端监听端口 |
+| `MAX_UPLOAD_SIZE_MB` | `100` | 上传文件大小限制 |
+| `DATABASE_PATH` | `./data/jobs.db` | SQLite 数据库路径 |
+| `UPLOAD_DIR` | `./uploads` | 上传临时目录 |
+| `BATCH_MAX_CONCURRENT` | `2` | 批量处理并发数 |
+| `LOG_LEVEL` | `INFO` | 日志级别 |
 
-    jobs ||--o{ job_files : contains
+### Docker 部署
+
+```yaml
+# docker-compose.yml
+services:
+  backend:    # FastAPI 应用
+  nginx:      # 前端静态资源 + API 反代，端口 9008
 ```
 
----
-
-## 输出目录结构
-
-```mermaid
-graph TB
-    Dest["目标目录"] --> pdf["pdf/"]
-    Dest --> tiff["tiff/"]
-    Dest --> jpg["jpg/"]
-    Dest --> txt["txt/"]
-    Dest --> md["md/"]
-    Dest --> json["json/"]
-
-    pdf --> p1["doc1_searchable.pdf"]
-    pdf --> p2["doc2_searchable.pdf"]
-
-    tiff --> t1["doc1.tiff"]
-    tiff --> t2["doc2.tiff"]
-
-    jpg --> j1["doc1_p1.jpg"]
-    jpg --> j2["doc1_p2.jpg"]
-    jpg --> j3["doc2_p1.jpg"]
-
-    txt --> x1["doc1.txt"]
-    txt --> x2["doc2.txt"]
-
-    md --> m1["doc1.md"]
-    md --> m2["doc2.md"]
-
-    json --> s1["doc1.json"]
-    json --> s2["doc2.json"]
-
-    classDef root fill:#fff3e0,stroke:#e65100,color:#e65100
-    classDef dir fill:#e8f5e9,stroke:#2e7d32,color:#2e7d32
-    classDef file fill:#f5f5f5,stroke:#9e9e9e,color:#616161
-
-    class Dest root
-    class pdf,tiff,jpg,txt,md,json dir
-    class p1,p2,t1,t2,j1,j2,j3,x1,x2,m1,m2,s1,s2 file
-```
-
----
-
-## 前端组件树
-
-```mermaid
-graph TB
-    App["App.tsx ConfigProvider+主题管理"] --> Layout["AppLayout.tsx 侧边栏+顶栏"]
-    Layout --> Nav["Sider 导航菜单"]
-    Layout --> Header["Header 折叠按钮 主题色 暗色切换"]
-
-    Layout --> Dashboard["Dashboard.tsx 仪表盘"]
-    Layout --> Upload["SingleUpload.tsx 单文件上传"]
-    Layout --> Batch["BatchProcess.tsx 批量处理"]
-
-    Upload --> FormatSel["FormatSelector 输出格式选择"]
-    Upload --> Zone["UploadZone 拖拽上传"]
-    Upload --> Jobs["JobList 任务记录"]
-
-    Batch --> FormatSel
-    Batch --> BForm["Form 源/目标目录"]
-    Batch --> BList["List 任务列表"]
-    Batch --> Detail["JobDetail 任务详情 Modal"]
-
-    classDef app fill:#e3f2fd,stroke:#1565c0,color:#1565c0
-    classDef layout fill:#fff3e0,stroke:#e65100,color:#e65100
-    classDef page fill:#e8f5e9,stroke:#2e7d32,color:#2e7d32
-    classDef comp fill:#f3e5f5,stroke:#6a1b9a,color:#6a1b9a
-
-    class App app
-    class Layout,Nav,Header layout
-    class Dashboard,Upload,Batch page
-    class FormatSel,Zone,Jobs,BForm,BList,Detail comp
-```
+外部依赖：PaddleOCR 服务 (8080) 和 MinerU 服务 (8000)，需在目标服务器网络可达。
