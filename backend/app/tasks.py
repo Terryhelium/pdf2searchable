@@ -10,37 +10,39 @@ from app.ocr import OCRProcessor
 logger = logging.getLogger(__name__)
 
 
-def _pick_result(results: dict[str, list[str]]) -> str:
-    """从多格式输出中选一个主路径存储（用于下载链接）"""
-    for fmt in ("pdf", "tiff", "jpeg", "txt", "md", "json"):
-        paths = results.get(fmt)
-        if paths:
-            return paths[0]
-    return ""
-
-
 async def process_single_file(db: Database, ocr: OCRProcessor,
                               job_id: str, file_path: Path, output_dir: Path,
-                              filename: Optional[str] = None):
+                              filename: Optional[str] = None,
+                              formats: Optional[list[str]] = None):
     """处理单个文件（单文件上传模式用）"""
     fname = filename or file_path.name
     try:
         await db.update_job_status(job_id, "processing")
-        await db.add_job_files(job_id, [fname])
-        results = await ocr.process(str(file_path), str(output_dir))
-        main_path = _pick_result(results)
-        await db.update_file_status(job_id, fname, "done", result_path=main_path)
-        await db.update_job_status(job_id, "done", processed_files=1)
+        results = await ocr.process(str(file_path), str(output_dir), formats=formats)
+
+        # 每个格式作为独立行写入 job_files
+        file_rows = []
+        for fmt, paths in results.items():
+            for p in paths:
+                out_name = Path(p).name
+                file_rows.append((job_id, out_name, fmt, str(p)))
+
+        if file_rows:
+            await db.add_job_files_with_formats(file_rows)
+        else:
+            await db.add_job_files(job_id, [fname])
+
+        await db.update_job_status(job_id, "done", processed_files=len(file_rows))
         logger.info("File processed: %s -> %s", file_path, results)
     except Exception as e:
         logger.exception("File processing failed: %s", file_path)
         err_msg = str(e)
-        await db.update_file_status(job_id, fname, "failed", error_msg=err_msg)
         await db.update_job_status(job_id, "failed", processed_files=0, error_count=1)
 
 
 async def run_batch_job(db: Database, ocr: OCRProcessor,
-                        job_id: str, source_dir: str, dest_dir: str):
+                        job_id: str, source_dir: str, dest_dir: str,
+                        formats: Optional[list[str]] = None):
     """后台批量处理任务"""
     src = Path(source_dir)
     dst = Path(dest_dir)
@@ -55,7 +57,6 @@ async def run_batch_job(db: Database, ocr: OCRProcessor,
         return
 
     await db.update_job_status(job_id, "processing", total_files=len(filenames))
-    await db.add_job_files(job_id, filenames)
 
     processed = 0
     errors = 0
@@ -63,13 +64,10 @@ async def run_batch_job(db: Database, ocr: OCRProcessor,
     for filename in filenames:
         file_path = src / filename
         try:
-            results = await ocr.process(str(file_path), str(dst))
-            main_path = _pick_result(results)
-            await db.update_file_status(job_id, filename, "done", result_path=main_path)
+            results = await ocr.process(str(file_path), str(dst), formats=formats)
             processed += 1
         except Exception as e:
             logger.error("Batch file failed: %s - %s", filename, e)
-            await db.update_file_status(job_id, filename, "failed", error_msg=str(e))
             errors += 1
         finally:
             await db.update_job_status(job_id, "processing" if processed + errors < len(filenames) else "done",

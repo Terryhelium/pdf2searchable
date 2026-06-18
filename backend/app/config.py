@@ -30,8 +30,8 @@ class Settings:
     mineru_url: str = field(default_factory=lambda: _get_env("MINERU_URL", "http://10.19.26.153:8000"))
 
     # Timeouts
-    paddleocr_timeout: int = field(default_factory=lambda: _get_env_int("PADDLEOCR_TIMEOUT", 120))
-    mineru_timeout: int = field(default_factory=lambda: _get_env_int("MINERU_TIMEOUT", 120))
+    paddleocr_timeout: int = field(default_factory=lambda: _get_env_int("PADDLEOCR_TIMEOUT", 600))
+    mineru_timeout: int = field(default_factory=lambda: _get_env_int("MINERU_TIMEOUT", 600))
 
     # Upload
     max_upload_size_mb: int = field(default_factory=lambda: _get_env_int("MAX_UPLOAD_SIZE_MB", 100))

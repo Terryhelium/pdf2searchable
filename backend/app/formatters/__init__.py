@@ -46,3 +46,11 @@ class FormatterRegistry(dict[str, type[BaseFormatter]]):
 
 # 全局注册表
 registry = FormatterRegistry()
+
+# 导入各格式模块触发 @registry.register
+from app.formatters import pdf  # noqa: F811
+from app.formatters import tiff  # noqa: F811
+from app.formatters import jpeg  # noqa: F811
+from app.formatters import txt  # noqa: F811
+from app.formatters import md  # noqa: F811
+from app.formatters import json  # noqa: F811

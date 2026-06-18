@@ -29,11 +29,17 @@ class StatsResponse(BaseModel):
 
 # ── 单文件上传 ──
 
+class FileDownloadInfo(BaseModel):
+    format: str
+    label: str
+    url: str
+
+
 class UploadResponse(BaseModel):
     job_id: str
     status: str
     formats: list[str] = []
-    result_url: Optional[str] = None
+    files: list[FileDownloadInfo] = []
     error: Optional[str] = None
 
 

@@ -1,8 +1,8 @@
 import axios from 'axios';
 
-const api = axios.create({
+export const api = axios.create({
   baseURL: '/api',
-  timeout: 300000, // 5 min for large uploads
+  timeout: 600000, // 10 min for large uploads
 });
 
 export type OutputFormat = 'pdf' | 'tiff' | 'jpeg' | 'txt' | 'md' | 'json';
@@ -25,11 +25,17 @@ export interface StatsInfo {
   total_files: number;
 }
 
+export interface FileDownloadInfo {
+  format: string;
+  label: string;
+  url: string;
+}
+
 export interface UploadResult {
   job_id: string;
   status: string;
   formats: string[];
-  result_url: string | null;
+  files: FileDownloadInfo[];
   error: string | null;
 }
 
@@ -79,10 +85,10 @@ export async function getStats(): Promise<StatsInfo> {
 }
 
 // 单文件上传
-export async function uploadFile(file: File, formats: OutputFormat[]): Promise<UploadResult> {
+export async function uploadFile(file: File, formats: OutputFormat[], signal?: AbortSignal): Promise<UploadResult> {
   const form = new FormData();
   form.append('file', file);
-  const resp = await api.post<UploadResult>(`/upload?formats=${formats.join(',')}`, form);
+  const resp = await api.post<UploadResult>(`/upload?formats=${formats.join(',')}`, form, { signal });
   return resp.data;
 }
 
@@ -118,6 +124,16 @@ export async function getBatchDetail(jobId: string): Promise<BatchDetail> {
 export async function listBatches(): Promise<BatchJobInfo[]> {
   const resp = await api.get<{ jobs: BatchJobInfo[] }>('/batch');
   return resp.data.jobs;
+}
+
+// 删除单个任务
+export async function deleteJob(jobId: string): Promise<void> {
+  await api.delete(`/jobs/${jobId}`);
+}
+
+// 批量删除任务
+export async function batchDeleteJobs(jobIds: string[]): Promise<void> {
+  await api.delete('/jobs', { params: { job_ids: jobIds } });
 }
 
 // 健康检查

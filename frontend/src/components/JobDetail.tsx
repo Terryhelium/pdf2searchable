@@ -1,5 +1,6 @@
-import { Descriptions, Tag, Table, Typography } from 'antd';
-import type { BatchDetail } from '../api/client';
+import { Descriptions, Tag, Table, Typography, Button } from 'antd';
+import { DownloadOutlined } from '@ant-design/icons';
+import type { BatchDetail, BatchFileInfo } from '../api/client';
 
 interface JobDetailProps {
   detail: BatchDetail;
@@ -12,35 +13,44 @@ const STATUS_MAP: Record<string, { color: string; text: string }> = {
   failed: { color: 'error', text: '失败' },
 };
 
-const FILE_COLUMNS = [
-  {
-    title: '文件名',
-    dataIndex: 'filename',
-    key: 'filename',
-    ellipsis: true,
-  },
-  {
-    title: '状态',
-    dataIndex: 'status',
-    key: 'status',
-    width: 100,
-    render: (status: string) => {
-      const s = STATUS_MAP[status] || { color: 'default', text: status };
-      return <Tag color={s.color}>{s.text}</Tag>;
-    },
-  },
-  {
-    title: '错误信息',
-    dataIndex: 'error_msg',
-    key: 'error_msg',
-    ellipsis: true,
-    render: (msg: string | null) =>
-      msg ? <Typography.Text type="danger">{msg}</Typography.Text> : '-',
-  },
-];
-
 function JobDetail({ detail }: JobDetailProps) {
   const s = STATUS_MAP[detail.status] || { color: 'default', text: detail.status };
+
+  const columns = [
+    {
+      title: '文件名',
+      dataIndex: 'filename',
+      key: 'filename',
+      ellipsis: true,
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      width: 80,
+      render: (status: string) => {
+        const s2 = STATUS_MAP[status] || { color: 'default', text: status };
+        return <Tag color={s2.color}>{s2.text}</Tag>;
+      },
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 100,
+      render: (_: any, record: BatchFileInfo) =>
+        record.result_path ? (
+          <Button
+            type="link"
+            size="small"
+            icon={<DownloadOutlined />}
+            href={`/api/download/${detail.job_id}?format=${record.filename.split('.').pop()}`}
+            target="_blank"
+          >
+            下载
+          </Button>
+        ) : null,
+    },
+  ];
 
   return (
     <div>
@@ -63,10 +73,10 @@ function JobDetail({ detail }: JobDetailProps) {
       </Descriptions>
       <Table
         dataSource={detail.files}
-        columns={FILE_COLUMNS}
+        columns={columns}
         rowKey="filename"
         size="small"
-        pagination={false}
+        pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }}
       />
     </div>
   );

@@ -56,7 +56,7 @@ npm run dev
 
 ```bash
 docker compose up -d --build
-# 访问 http://<host>:9008
+# 访问 http://<host>:9010
 ```
 
 ## 配置

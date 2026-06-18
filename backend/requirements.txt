@@ -6,3 +6,4 @@ aiosqlite==0.22.1
 pypdf==6.13.2
 Pillow==12.2.0
 img2pdf==0.6.3
+PyMuPDF==1.25.5

@@ -1,16 +1,21 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Card, Form, Input, Button, List, Tag, Space, Alert, Typography, Spin, Modal,
+  Card, Form, Input, Button, List, Tag, Space, Alert, Typography, Spin, Modal, Radio, Upload, message,
 } from 'antd';
 import {
-  FolderOpenOutlined, ReloadOutlined, EyeOutlined,
+  FolderOpenOutlined, ReloadOutlined, EyeOutlined, FolderOutlined, InboxOutlined,
 } from '@ant-design/icons';
 import FormatSelector from '../components/FormatSelector';
+import DirectoryBrowser from '../components/DirectoryBrowser';
 import JobDetail from '../components/JobDetail';
 import {
-  createBatch, listBatches, getBatchDetail, BatchJobInfo, BatchDetail,
+  api, createBatch, listBatches, getBatchDetail, BatchJobInfo, BatchDetail,
   OutputFormat,
 } from '../api/client';
+
+const { Dragger } = Upload;
+
+type BatchMode = 'server' | 'local';
 
 const STATUS_MAP: Record<string, { color: string; text: string }> = {
   pending: { color: 'default', text: '等待中' },
@@ -29,6 +34,11 @@ function BatchProcess() {
   const [selectedDetail, setSelectedDetail] = useState<BatchDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [formats, setFormats] = useState<OutputFormat[]>(['pdf', 'tiff', 'txt', 'md']);
+  const [batchMode, setBatchMode] = useState<BatchMode>('server');
+  const [browserOpen, setBrowserOpen] = useState(false);
+  const [browserTarget, setBrowserTarget] = useState<'source' | 'dest'>('source');
+  const [uploadedFiles, setUploadedFiles] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadJobs = useCallback(async () => {
@@ -81,6 +91,37 @@ function BatchProcess() {
     }
   };
 
+  const handleBrowse = (target: 'source' | 'dest') => {
+    setBrowserTarget(target);
+    setBrowserOpen(true);
+  };
+
+  const handleBrowserSelect = (path: string) => {
+    form.setFieldsValue({ [browserTarget === 'source' ? 'source_dir' : 'dest_dir']: path });
+    setBrowserOpen(false);
+  };
+
+  const handleLocalUpload = async (fileList: File[]) => {
+    if (fileList.length === 0) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      fileList.forEach(f => formData.append('files', f));
+      const resp = await api.post('/batch/upload-files', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 600000,
+      });
+      setUploadedFiles(resp.data.files);
+      form.setFieldsValue({ source_dir: resp.data.source_dir });
+      message.success(`上传完成，共 ${resp.data.count} 个文件`);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e?.message || '上传失败');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleViewDetail = async (jobId: string) => {
     setDetailLoading(true);
     setDetailOpen(true);
@@ -107,29 +148,128 @@ function BatchProcess() {
             <FormatSelector value={formats} onChange={setFormats} disabled={creating} />
           </Form.Item>
 
-          <Form.Item
-            name="source_dir"
-            label="源目录"
-            rules={[{ required: true, message: '请输入源目录路径' }]}
-          >
-            <Input placeholder="/mnt/nas/source" />
+          <Form.Item label="源文件来源" style={{ marginBottom: 16 }}>
+            <Radio.Group
+              value={batchMode}
+              onChange={(e) => setBatchMode(e.target.value)}
+              optionType="button"
+              buttonStyle="solid"
+            >
+              <Radio.Button value="server">服务器目录</Radio.Button>
+              <Radio.Button value="local">本地上传</Radio.Button>
+            </Radio.Group>
           </Form.Item>
 
-          <Form.Item
-            name="dest_dir"
-            label="输出目录"
-            rules={[{ required: true, message: '请输入输出目录路径' }]}
-          >
-            <Input placeholder="/mnt/nas/dest" />
-          </Form.Item>
+          {batchMode === 'server' ? (
+            <>
+              <Form.Item
+                name="source_dir"
+                label="源目录"
+                rules={[{ required: true, message: '请输入源目录路径' }]}
+              >
+                <Input
+                  placeholder="/mnt/nas/source"
+                  addonAfter={
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<FolderOutlined />}
+                      onClick={() => handleBrowse('source')}
+                      style={{ padding: 0, height: 'auto' }}
+                    >
+                      浏览
+                    </Button>
+                  }
+                />
+              </Form.Item>
 
-          <Form.Item
-            name="file_pattern"
-            label="文件匹配模式"
-            initialValue="*"
-          >
-            <Input placeholder="*.pdf（留空处理所有文件）" />
-          </Form.Item>
+              <Form.Item
+                name="dest_dir"
+                label="输出目录"
+                rules={[{ required: true, message: '请输入输出目录路径' }]}
+              >
+                <Input
+                  placeholder="/mnt/nas/dest"
+                  addonAfter={
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<FolderOutlined />}
+                      onClick={() => handleBrowse('dest')}
+                      style={{ padding: 0, height: 'auto' }}
+                    >
+                      浏览
+                    </Button>
+                  }
+                />
+              </Form.Item>
+
+              <Form.Item
+                name="file_pattern"
+                label="文件匹配模式"
+                initialValue="*"
+              >
+                <Input placeholder="*.pdf（留空处理所有文件）" />
+              </Form.Item>
+            </>
+          ) : (
+            <>
+              <Form.Item label="选择文件">
+                <Dragger
+                  multiple
+                  accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp"
+                  disabled={uploading}
+                  beforeUpload={(file) => {
+                    const maxSize = 100 * 1024 * 1024;
+                    if (file.size > maxSize) {
+                      message.error(`文件太大：${file.name}（最大 100MB）`);
+                      return Upload.LIST_IGNORE;
+                    }
+                    return false;
+                  }}
+                  onChange={(info) => {
+                    const files = info.fileList
+                      .map(f => f.originFileObj as File)
+                      .filter(Boolean);
+                    handleLocalUpload(files);
+                  }}
+                >
+                  <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+                  <p className="ant-upload-text">点击或拖拽文件到此处上传</p>
+                  <p className="ant-upload-hint">
+                    支持多文件选择，PDF、PNG、JPG、TIFF、BMP，单文件最大 100MB
+                  </p>
+                </Dragger>
+              </Form.Item>
+
+              {uploadedFiles.length > 0 && (
+                <Alert
+                  type="success"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message={`已上传 ${uploadedFiles.length} 个文件到服务器`}
+                  description={
+                    <Typography.Text code style={{ fontSize: 12 }}>
+                      {uploadedFiles.slice(0, 5).join(', ')}
+                      {uploadedFiles.length > 5 && `... 等 ${uploadedFiles.length} 个文件`}
+                    </Typography.Text>
+                  }
+                />
+              )}
+
+              <Form.Item
+                name="dest_dir"
+                label="输出目录"
+                rules={[{ required: true, message: '请输入输出目录路径' }]}
+              >
+                <Input placeholder="/mnt/nas/dest" />
+              </Form.Item>
+
+              <Form.Item name="source_dir" hidden>
+                <Input />
+              </Form.Item>
+            </>
+          )}
 
           {error && (
             <Alert
@@ -242,6 +382,13 @@ function BatchProcess() {
           <Typography.Text type="danger">加载失败</Typography.Text>
         )}
       </Modal>
+      <DirectoryBrowser
+        open={browserOpen}
+        onClose={() => setBrowserOpen(false)}
+        onSelect={handleBrowserSelect}
+        title={browserTarget === 'source' ? '选择源目录' : '选择输出目录'}
+        initialPath="/mnt"
+      />
     </Space>
   );
 }

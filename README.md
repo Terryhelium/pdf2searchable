@@ -31,7 +31,7 @@ graph TB
     end
 
     subgraph Docker["🐳 Docker Compose"]
-        subgraph Nginx["Nginx (:9008)"]
+        subgraph Nginx["Nginx (:9010)"]
             direction LR
             SPA["静态资源<br/>/*"] 
             Proxy["API 反代<br/>/api/*"]
@@ -50,7 +50,7 @@ graph TB
         MU["MinerU<br/>文档结构解析"]
     end
 
-    UI -->|"HTTP :5173/:9008"| Nginx
+    UI -->|"HTTP :5173/:9010"| Nginx
     Nginx -->|"/*"| SPA
     Nginx -->|"/api/*"| API
     API --> OCR
@@ -135,7 +135,7 @@ npm run dev -- --host 0.0.0.0
 
 ```bash
 docker compose up -d --build
-# 访问 http://<host>:9008
+# 访问 http://<host>:9010
 ```
 
 ---

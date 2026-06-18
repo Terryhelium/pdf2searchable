@@ -4,7 +4,7 @@ import {
 } from 'antd';
 import {
   FileTextOutlined, CheckCircleOutlined, CloseCircleOutlined,
-  LoadingOutlined, CalendarOutlined, InboxOutlined,
+  SyncOutlined, CalendarOutlined, InboxOutlined,
 } from '@ant-design/icons';
 import { getStats, listBatches, StatsInfo, BatchJobInfo } from '../api/client';
 
@@ -83,7 +83,7 @@ function Dashboard() {
             <Statistic
               title="处理中"
               value={stats?.processing_jobs ?? 0}
-              prefix={<LoadingOutlined />}
+              prefix={<SyncOutlined />}
               valueStyle={{ fontSize: 24, color: '#faad14' }}
             />
           </Card>

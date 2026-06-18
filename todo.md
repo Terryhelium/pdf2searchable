@@ -1,53 +1,40 @@
 # 宁波市档案馆文档OCR处理系统 开发日志
 
-## ✅ 已完成（2026-06-11 ~ 06-13）
+## v2.0 — 已发布（2026-06-18）
 
-### 框架搭建
-- [x] 依赖全部升级至最新：antd 6 / vite 8 / TS 6 / FastAPI 0.136
-- [x] PyPDF2 → pypdf 迁移，后端全部包 latest
+### 功能完成
 - [x] 前后端分离架构，FastAPI + React + Ant Design 6
+- [x] 所有 API 路由 + SQLite 数据库
+- [x] PaddleOCR-VL + MinerU 双引擎集成
+- [x] 6 种格式输出（PDF / TIFF / JPEG / TXT / MD / JSON）
+- [x] 单文件上传 + 批量处理（服务器目录 / 本地上传）
+- [x] 任务记录管理（下载 / 单删 / 批量删）
+- [x] Docker Compose 部署（端口 9010）
+- [x] CJK 字体嵌入（可搜索PDF中文可搜）
+- [x] 自适应字号 + 每页字体注册
+- [x] 文档：交付文档 / 服务调度速查 / 离线打包指南
 
-### 界面
-- [x] 侧边导航栏（仪表盘 / 上传 / 批量）
-- [x] 仪表盘页面：6 个统计卡片 + 最近处理记录
-- [x] 单文件上传页：拖拽上传 + 格式选择 + 状态轮询 + 结果下载
-- [x] 批量处理页：目录输入 + 格式选择 + 任务列表 + 文件级详情
-- [x] 深色/浅色模式切换 + 6 种主题色预设
-
-### 后端
-- [x] API 路由：health / stats / upload / batch / download / job query
-- [x] SQLite 数据库（aiosqlite），jobs + job_files 表
-- [x] PaddleOCR + MinerU HTTP 客户端骨架
-- [x] Formatter 架构：6 种格式独立模块 + 注册表自动发现
-- [x] OCR 引擎按需调用（TIFF/JPEG 不需要 OCR）
-- [x] 输出按格式分目录：pdf/ tiff/ jpg/ txt/ md/ json/
-- [x] 统计接口 /api/stats
-- [x] JSON 格式输出（完整 OCR 数据，预留 NER 标注）
-
-### 工程
-- [x] Docker Compose 部署配置
-- [x] .gitignore / .editorconfig / CLAUDE.md
-- [x] README.md + ARCHITECTURE.md（Mermaid 彩图 x 8）
-- [x] CHANGELOG.md / ROADMAP.md / CONTRIBUTING.md
-- [x] GIT_REMOTE.md + 双远程推送（Gitea + GitHub）
+### 已知问题
+- [ ] **可搜索PDF文字偏移** — PaddleOCR 坐标与 PyMuPDF 渲染底图存在偏移，旋转页面更明显。
+      记录见 `已知问题.md`，下次集中解决。
 
 ---
 
-## ⏳ 待办（按优先级）
+## 后续规划
 
-### 一、连上 OCR 服务器后
-- [ ] 验证 PaddleOCR 真实 API 格式，修正客户端
-- [ ] 验证 MinerU 真实 API 格式，修正客户端
-- [ ] 实现 SearchablePDFFormatter（pypdf 叠加文字层）
-- [ ] 实现 TIFFFormatter（Pillow 多页 TIFF + LZW）
-- [ ] 实现 JPEGFormatter（Pillow 逐页预览图）
-- [ ] 实现 TextFormatter（按 MinerU 阅读顺序提取）
-- [ ] 实现 MarkdownFormatter（MinerU 结构转 MD 语法）
-- [ ] 端到端单文件 + 批量流程测试
-- [ ] docker compose up 完整部署验证
+### 近期（v2.1）
+- [ ] 文件预览（PDF/图片在线查看）
+- [ ] 处理进度百分比
+- [ ] 输出文件打包 ZIP 下载
 
-### 二、上线准备
-- [ ] NAS 挂载路径配置
+### 中期（v2.2）
 - [ ] Docker 镜像瘦身
-- [ ] USER_MANUAL.md 用户操作手册
-- [ ] 部署文档
+- [ ] 操作手册 USER_MANUAL.md
+- [ ] Docker 卷定期备份策略
+
+### PDF 偏移问题（待解决）
+- [ ] 根本原因：PaddleOCR-VL 内部渲染 PDF 的方式与 PyMuPDF 不一致
+- [ ] 尝试方向1：PyMuPDF 渲染 PNG → 发给 PaddleOCR → 用同样 PNG 做底图（当前尝试，仍有偏差）
+- [ ] 尝试方向2：用 PaddleOCR 返回的 JSON 中的原文位置信息（block_bbox）直接映射
+- [ ] 尝试方向3：不用 PaddleOCR-VL，改用 MinerU 的 content_list 坐标
+- [ ] 尝试方向4：用 OCRmyPDF 或其它专门做双层 PDF 的工具替代自研方案

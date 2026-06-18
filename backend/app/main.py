@@ -7,15 +7,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request, Query
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.config import Settings, load_settings
 from app.db import Database
 from app.models import (
     BatchCreateRequest, BatchCreateResponse, BatchDetailResponse,
-    BatchJobInfo, BatchListResponse, ErrorResponse, HealthResponse,
-    StatsResponse, UploadResponse, OUTPUT_FORMATS,
+    BatchJobInfo, BatchListResponse, FileDownloadInfo, HealthResponse,
+    StatsResponse, UploadResponse, OUTPUT_FORMATS, OUTPUT_FORMAT_LABELS,
 )
 from app.ocr import PaddleOCRClient, MinerUClient, OCRProcessor, ServiceError
 from app.tasks import process_single_file, run_batch_job
@@ -82,12 +82,45 @@ async def health():
     )
 
 
+# ── 目录浏览 ──
+
+@app.get("/api/browse")
+async def browse_directory(path: str = Query("/", description="浏览的目录路径")):
+    """列出指定目录的内容（用于批量处理的目录选择器）"""
+    try:
+        p = Path(path).resolve()
+        if not p.is_dir():
+            # 尝试从父目录开始
+            p = p.parent.resolve()
+        if not p.exists():
+            p = Path("/")
+
+        items = []
+        for entry in sorted(p.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())):
+            try:
+                items.append({
+                    "name": entry.name,
+                    "path": str(entry.resolve()),
+                    "is_dir": entry.is_dir(),
+                    "size": entry.stat().st_size if entry.is_file() else 0,
+                })
+            except PermissionError:
+                continue
+
+        return {
+            "current": str(p.resolve()),
+            "parent": str(p.parent.resolve()) if p.parent != p else None,
+            "items": items,
+        }
+    except Exception as e:
+        raise HTTPException(400, detail=str(e))
+
+
 # ── 单文件上传 ──
 
 @app.post("/api/upload", response_model=UploadResponse, status_code=201)
 async def upload_file(
     file: UploadFile = File(...),
-    background_tasks: BackgroundTasks = None,
     formats: str = "pdf,txt,md",
 ):
     if not file.filename:
@@ -108,14 +141,38 @@ async def upload_file(
 
     # 创建任务
     db = app.state.db
+    ocr = app.state.ocr
     job_id = await db.create_job("single", formats=fmt_list)
 
-    # 后台处理
+    # 同步处理（等待完成）
     output_dir = upload_dir / "results"
     output_dir.mkdir(parents=True, exist_ok=True)
-    background_tasks.add_task(process_single_file, db, app.state.ocr, job_id, file_path, output_dir, file.filename)
+    await process_single_file(db, ocr, job_id, file_path, output_dir, file.filename, fmt_list)
 
-    return UploadResponse(job_id=job_id, status="pending", formats=fmt_list)
+    # 查询结果
+    job = await db.get_job(job_id)
+    files = await db.get_job_files(job_id)
+    error = None
+    file_list = []
+    if job["status"] == "done":
+        for f in files:
+            fmt = Path(f["result_path"]).parent.name if f.get("result_path") else ""
+            label = OUTPUT_FORMAT_LABELS.get(fmt, fmt.upper())
+            file_list.append(FileDownloadInfo(
+                format=fmt,
+                label=label,
+                url=f"/api/download/{job_id}?format={fmt}",
+            ))
+    elif job["status"] == "failed":
+        error = files[0].get("error_msg") if files else "处理失败"
+
+    return UploadResponse(
+        job_id=job_id,
+        status=job["status"],
+        formats=fmt_list,
+        files=file_list,
+        error=error,
+    )
 
 
 @app.get("/api/jobs/{job_id}", response_model=UploadResponse)
@@ -124,16 +181,21 @@ async def get_job(job_id: str):
     job = await db.get_job(job_id)
     if not job:
         raise HTTPException(404, detail="job not found")
-    result_url = None
     error = None
+    file_list = []
+    job_files = await db.get_job_files(job_id)
     if job["status"] == "done":
-        files = await db.get_job_files(job_id)
-        if files:
-            result_url = f"/api/download/{job_id}/{files[0]['filename']}"
-    elif job["status"] == "failed":
-        files = await db.get_job_files(job_id)
-        if files:
-            error = files[0].get("error_msg")
+        for f in job_files:
+            fmt = f.get("format") or (Path(f["result_path"]).parent.name if f.get("result_path") else "")
+            if fmt:
+                label = OUTPUT_FORMAT_LABELS.get(fmt, fmt.upper())
+                file_list.append(FileDownloadInfo(
+                    format=fmt,
+                    label=label,
+                    url=f"/api/download/{job_id}?format={fmt}",
+                ))
+    elif job["status"] == "failed" and job_files:
+        error = job_files[0].get("error_msg")
 
     fmts = job.get("formats", "pdf,txt,md").split(",") if job.get("formats") else []
 
@@ -141,24 +203,91 @@ async def get_job(job_id: str):
         job_id=job["id"],
         status=job["status"],
         formats=fmts,
-        result_url=result_url,
+        files=file_list,
         error=error,
     )
 
 
+# ── 删除任务 ──
+
+@app.delete("/api/jobs/{job_id}")
+async def delete_job(job_id: str):
+    """删除单个任务及其结果文件"""
+    db = app.state.db
+    job = await db.get_job(job_id)
+    if not job:
+        raise HTTPException(404, detail="job not found")
+    paths = await db.delete_job(job_id)
+    for p in paths:
+        try:
+            os.remove(p)
+        except Exception:
+            pass
+    return {"deleted": job_id}
+
+
+@app.delete("/api/jobs")
+async def batch_delete_jobs(job_ids: list[str] = Query(..., description="任务ID列表")):
+    """批量删除任务及其结果文件"""
+    db = app.state.db
+    paths = await db.delete_jobs(job_ids)
+    for p in paths:
+        try:
+            os.remove(p)
+        except Exception:
+            pass
+    return {"deleted": job_ids, "count": len(job_ids)}
+
+
 # ── 文件下载 ──
 
-@app.get("/api/download/{job_id}/{filename:path}")
-async def download_file(job_id: str, filename: str):
+@app.get("/api/download/{job_id}")
+async def download_file(job_id: str, format: str = ""):
     db = app.state.db
-    files = await db.get_job_files(job_id)
-    for f in files:
-        if f["filename"] == filename and f.get("result_path"):
-            return FileResponse(f["result_path"], filename=filename)
+    job_files = await db.get_job_files(job_id)
+    if format:
+        # 按格式下载
+        for f in job_files:
+            if f.get("result_path") and Path(f["result_path"]).parent.name == format:
+                return FileResponse(f["result_path"], filename=Path(f["result_path"]).name)
+        raise HTTPException(404, detail=f"format not found: {format}")
+    # 回退：下载第一个结果文件
+    for f in job_files:
+        if f.get("result_path"):
+            return FileResponse(f["result_path"], filename=Path(f["result_path"]).name)
     raise HTTPException(404, detail="file not found")
 
 
 # ── 批量处理 ──
+
+@app.post("/api/batch/upload-files", status_code=201)
+async def batch_upload_files(files: list[UploadFile] = File(...)):
+    """上传多个文件到临时目录，返回目录路径用于批量处理"""
+    if not files:
+        raise HTTPException(400, detail="请选择至少一个文件")
+
+    batch_dir = Path(settings.upload_dir) / "batch_uploads" / uuid.uuid4().hex
+    batch_dir.mkdir(parents=True, exist_ok=True)
+
+    saved = []
+    for file in files:
+        if not file.filename:
+            continue
+        safe_name = f"{uuid.uuid4().hex}_{file.filename}"
+        file_path = batch_dir / safe_name
+        content = await file.read()
+        file_path.write_bytes(content)
+        saved.append(file.filename)
+
+    if not saved:
+        raise HTTPException(400, detail="没有成功保存任何文件")
+
+    return {
+        "source_dir": str(batch_dir),
+        "files": saved,
+        "count": len(saved),
+    }
+
 
 @app.post("/api/batch", response_model=BatchCreateResponse, status_code=201)
 async def create_batch(req: BatchCreateRequest, background_tasks: BackgroundTasks = None):
@@ -169,7 +298,7 @@ async def create_batch(req: BatchCreateRequest, background_tasks: BackgroundTask
     db = app.state.db
     job_id = await db.create_job("batch", source_dir=req.source_dir, dest_dir=req.dest_dir, formats=req.formats)
 
-    background_tasks.add_task(run_batch_job, db, app.state.ocr, job_id, req.source_dir, req.dest_dir)
+    background_tasks.add_task(run_batch_job, db, app.state.ocr, job_id, req.source_dir, req.dest_dir, req.formats)
 
     return BatchCreateResponse(job_id=job_id, status="pending", formats=req.formats)
 

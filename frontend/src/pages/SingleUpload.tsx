@@ -1,75 +1,33 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { Card, Button, Alert, Progress, Space, Typography } from 'antd';
-import { DownloadOutlined, ReloadOutlined } from '@ant-design/icons';
+import { useState, useEffect, useRef } from 'react';
+import { Card, Button, Alert, Progress, Space, Typography, Spin } from 'antd';
+import { DownloadOutlined, ReloadOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import UploadZone from '../components/UploadZone';
 import FormatSelector from '../components/FormatSelector';
 import JobList from '../components/JobList';
 import {
-  uploadFile, getJob, listBatches, BatchJobInfo,
-  OutputFormat, OUTPUT_FORMAT_LABELS,
+  uploadFile, listBatches, BatchJobInfo,
+  OutputFormat,
 } from '../api/client';
 
 type UploadState = 'idle' | 'uploading' | 'processing' | 'done' | 'failed';
 
+interface FileDownload {
+  format: string;
+  label: string;
+  url: string;
+}
+
 function SingleUpload() {
   const [uploadState, setUploadState] = useState<UploadState>('idle');
-  const [resultUrl, setResultUrl] = useState<string | null>(null);
+  const [files, setFiles] = useState<FileDownload[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [uploadFileName, setUploadFileName] = useState<string>('');
   const [recentJobs, setRecentJobs] = useState<BatchJobInfo[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [formats, setFormats] = useState<OutputFormat[]>(['pdf', 'tiff', 'txt', 'md']);
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const stopPolling = useCallback(() => {
-    if (pollingRef.current) {
-      clearInterval(pollingRef.current);
-      pollingRef.current = null;
-    }
-  }, []);
-
-  const startPolling = useCallback((id: string) => {
-    stopPolling();
-    pollingRef.current = setInterval(async () => {
-      try {
-        const job = await getJob(id);
-        if (job.status === 'done') {
-          setUploadState('done');
-          setResultUrl(job.result_url);
-          stopPolling();
-          loadRecentJobs();
-        } else if (job.status === 'failed') {
-          setUploadState('failed');
-          setError(job.error || '处理失败');
-          stopPolling();
-        } else if (job.status === 'processing') {
-          setUploadState('processing');
-        }
-      } catch {
-        stopPolling();
-      }
-    }, 2000);
-  }, [stopPolling]);
-
-  useEffect(() => {
-    return () => stopPolling();
-  }, [stopPolling]);
-
-  const handleUploadStart = async (file: File) => {
-    setUploadFileName(file.name);
-    setError(null);
-    setResultUrl(null);
-    setUploadState('uploading');
-
-    try {
-      const result = await uploadFile(file, formats);
-      setUploadState('processing');
-      startPolling(result.job_id);
-    } catch (e: any) {
-      setUploadState('failed');
-      setError(e?.response?.data?.detail || e?.message || '上传失败');
-    }
-  };
+  const [elapsed, setElapsed] = useState(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadRecentJobs = async () => {
     setJobsLoading(true);
@@ -87,63 +45,129 @@ function SingleUpload() {
     loadRecentJobs();
   }, []);
 
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
+
+  const handleUploadStart = async (file: File) => {
+    setUploadFileName(file.name);
+    setError(null);
+    setFiles([]);
+    setElapsed(0);
+    setUploadState('uploading');
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      setUploadState('processing');
+      timerRef.current = setInterval(() => {
+        setElapsed(s => s + 1);
+      }, 1000);
+
+      const result = await uploadFile(file, formats, controller.signal);
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (result.status === 'done') {
+        setUploadState('done');
+        setFiles(result.files || []);
+        loadRecentJobs();
+      } else if (result.status === 'failed') {
+        setUploadState('failed');
+        setError(result.error || '处理失败');
+      } else {
+        setUploadState('failed');
+        setError('未知状态: ' + result.status);
+      }
+    } catch (e: any) {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (e?.code !== 'ERR_CANCELED' && e?.message !== 'canceled') {
+        setUploadState('failed');
+        setError(e?.response?.data?.detail || e?.message || '上传或处理失败');
+      } else {
+        handleReset();
+      }
+    }
+  };
+
+  const handleCancel = () => {
+    abortRef.current?.abort();
+    if (timerRef.current) clearInterval(timerRef.current);
+    handleReset();
+  };
+
   const handleReset = () => {
-    stopPolling();
     setUploadState('idle');
-    setResultUrl(null);
+    setFiles([]);
     setError(null);
     setUploadFileName('');
+    setElapsed(0);
   };
 
   const isProcessing = uploadState === 'uploading' || uploadState === 'processing';
+  const FMT_LABELS: Record<string, string> = { pdf: '可搜索PDF', tiff: 'TIFF', jpeg: 'JPEG', txt: '文本', md: 'Markdown', json: 'JSON' };
+  const fmtLabels = formats.map(f => FMT_LABELS[f] || f).join('、');
 
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="large">
       <Card title="上传文件">
-        <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          <FormatSelector value={formats} onChange={setFormats} disabled={isProcessing} />
-
-          <UploadZone onUploadStart={handleUploadStart} disabled={isProcessing} />
-        </Space>
+        {uploadState === 'processing' ? (
+          <div style={{ textAlign: 'center', padding: '40px 0' }}>
+            <Spin size="large" />
+            <div style={{ marginTop: 16 }}>
+              <Typography.Text strong>正在处理: {uploadFileName}</Typography.Text>
+            </div>
+            <Typography.Text type="secondary" style={{ marginTop: 8, display: 'block' }}>
+              正在进行 OCR 识别和文档解析（{elapsed} 秒）...
+            </Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+              输出格式: {fmtLabels} | 多页文档可能需要几分钟
+            </Typography.Text>
+            <Button
+              danger
+              style={{ marginTop: 16 }}
+              icon={<CloseCircleOutlined />}
+              onClick={handleCancel}
+            >
+              取消处理
+            </Button>
+          </div>
+        ) : (
+          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            <FormatSelector value={formats} onChange={setFormats} disabled={isProcessing} />
+            <UploadZone onUploadStart={handleUploadStart} disabled={isProcessing} />
+          </Space>
+        )}
 
         {uploadState === 'uploading' && (
           <Progress percent={99} status="active" style={{ marginTop: 16 }} />
         )}
 
-        {uploadState === 'processing' && (
-          <Alert
-            style={{ marginTop: 16 }}
-            type="info"
-            showIcon
-            message={`正在处理: ${uploadFileName}`}
-            description={(() => {
-              const fmtLabels = formats.map(f => OUTPUT_FORMAT_LABELS[f]).join('、');
-              return `输出格式: ${fmtLabels} | 正在进行OCR识别和文档解析，请稍候...`;
-            })()}
-          />
-        )}
-
-        {uploadState === 'done' && resultUrl && (
+        {uploadState === 'done' && files.length > 0 && (
           <Alert
             style={{ marginTop: 16 }}
             type="success"
             showIcon
-            message="处理完成"
+            message={`处理完成（用时 ${elapsed} 秒）`}
             description={
-              <Space>
+              <Space direction="vertical" style={{ width: '100%' }}>
                 <Typography.Text>{uploadFileName}</Typography.Text>
-                {formats.map((fmt) => (
-                  <Button
-                    key={fmt}
-                    type="primary"
-                    size="small"
-                    icon={<DownloadOutlined />}
-                    href={resultUrl}
-                    target="_blank"
-                  >
-                    下载 {OUTPUT_FORMAT_LABELS[fmt]}
-                  </Button>
-                ))}
+                <Space wrap>
+                  {files.map((f) => (
+                    <Button
+                      key={f.format}
+                      type="primary"
+                      size="small"
+                      icon={<DownloadOutlined />}
+                      href={f.url}
+                      target="_blank"
+                    >
+                      下载 {f.label}
+                    </Button>
+                  ))}
+                </Space>
               </Space>
             }
           />

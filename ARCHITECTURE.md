@@ -6,7 +6,7 @@
 
 ```mermaid
 graph TB
-    Browser["Browser React + Antd"] --> Nginx["Nginx (:9008)"]
+    Browser["Browser React + Antd"] --> Nginx["Nginx (:9010)"]
     Nginx -->|API| Backend["FastAPI (:8000)"]
     Backend -->|OCR| Paddle["PaddleOCR :8080"]
     Backend -->|Parse| Mineru["MinerU :8000"]
@@ -45,12 +45,17 @@ graph TB
 |------|------|------|
 | `/api/health` | GET | 健康检查，返回 PaddleOCR / MinerU 状态 |
 | `/api/stats` | GET | 统计数据：总任务数、今日、成功/失败/处理中 |
-| `/api/upload` | POST | 单文件上传，参数 `formats` 指定输出格式 |
-| `/api/jobs/{id}` | GET | 查询单个任务状态和结果 |
-| `/api/download/{id}/{file}` | GET | 下载处理结果文件 |
+| `/api/upload` | POST | 单文件上传，同步处理，参数 `formats` 指定输出格式 |
+| `/api/jobs/{id}` | GET | 查询单个任务状态和下载文件列表 |
+| `/api/jobs/{id}` | DELETE | 删除单个任务及其结果文件 |
+| `/api/jobs` | DELETE | 批量删除任务（参数 `job_ids`） |
+| `/api/download/{id}` | GET | 下载结果文件（参数 `format` 指定格式） |
 | `/api/batch` | POST | 创建批量任务：源目录 + 目标目录 + 格式 |
 | `/api/batch` | GET | 批量任务列表 |
 | `/api/batch/{id}` | GET | 批量任务详情（含每个文件的处理状态） |
+| `/api/batch/upload-files` | POST | 本地上传多文件到临时目录，返回路径用于批量处理 |
+| `/api/browse` | GET | 浏览服务器目录（参数 `path`） |
+| `/api/stats` | GET | 统计数据：总任务数、今日、成功/失败/处理中 |
 
 ---
 
@@ -200,9 +205,9 @@ frontend/src/
 
 **仪表盘**：进入系统默认页面，展示 6 个统计卡片（总文档数、今日处理、成功/失败/处理中、任务总数）和最近处理记录列表。
 
-**单文件上传**：选择输出格式 → 拖拽或点击上传 → 实时轮询处理状态 → 完成后显示下载链接。
+**单文件上传**：选择输出格式 → 拖拽或点击上传 → 同步等待处理完成 → 显示每种格式的下载按钮（含耗时和取消按钮）。
 
-**批量处理**：选择输出格式 → 输入源/目标目录 → 创建任务 → 后台逐文件处理，可查看每个文件的状态和错误信息。
+**批量处理**：支持两种模式 — "服务器目录"（直接输入 NAS 路径 + 目录浏览器）和"本地上传"（从电脑选择文件上传到服务器），创建任务后后台逐文件处理。
 
 ---
 
@@ -222,7 +227,7 @@ frontend/src/
 
 ```bash
 docker compose up -d --build
-# 访问 http://<host>:9008
+# 访问 http://<host>:9010
 ```
 
 外部依赖：PaddleOCR (8080) 和 MinerU (8000)，需目标服务器网络可达。

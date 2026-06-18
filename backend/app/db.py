@@ -39,18 +39,25 @@ class Database:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 job_id TEXT NOT NULL,
                 filename TEXT NOT NULL,
+                format TEXT DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'pending',
                 error_msg TEXT,
                 result_path TEXT,
                 FOREIGN KEY (job_id) REFERENCES jobs(id)
             );
         """)
-        # 兼容旧表（无 formats 列时补齐）
+        # 兼容旧表
+        for col in ("formats",):
+            try:
+                await self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} TEXT DEFAULT 'pdf,txt,md'")
+                await self._conn.commit()
+            except Exception:
+                pass
         try:
-            await self._conn.execute("ALTER TABLE jobs ADD COLUMN formats TEXT DEFAULT 'pdf,txt,md'")
+            await self._conn.execute("ALTER TABLE job_files ADD COLUMN format TEXT DEFAULT ''")
             await self._conn.commit()
         except Exception:
-            pass  # 列已存在
+            pass
 
     async def close(self):
         if self._conn:
@@ -136,6 +143,17 @@ class Database:
         )
         await self._conn.commit()
 
+    async def add_job_files_with_formats(self, rows: list[tuple[str, str, str, str]]):
+        """批量插入带格式的文件记录
+        rows: [(job_id, filename, format, result_path), ...]
+        """
+        await self._conn.executemany(
+            "INSERT INTO job_files (job_id, filename, format, status, result_path) "
+            "VALUES (?, ?, ?, 'done', ?)",
+            rows,
+        )
+        await self._conn.commit()
+
     async def update_file_status(self, job_id: str, filename: str, status: str,
                                  error_msg: Optional[str] = None,
                                  result_path: Optional[str] = None):
@@ -144,6 +162,26 @@ class Database:
             (status, error_msg, result_path, job_id, filename),
         )
         await self._conn.commit()
+
+    async def delete_job(self, job_id: str) -> list[str]:
+        """删除任务及关联文件，返回需要清理的文件路径列表"""
+        files = await self.get_job_files(job_id)
+        paths = [f["result_path"] for f in files if f.get("result_path")]
+        await self._conn.execute("DELETE FROM job_files WHERE job_id = ?", (job_id,))
+        await self._conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+        await self._conn.commit()
+        return paths
+
+    async def delete_jobs(self, job_ids: list[str]) -> list[str]:
+        """批量删除任务，返回所有需要清理的文件路径"""
+        all_paths = []
+        for jid in job_ids:
+            files = await self.get_job_files(jid)
+            all_paths.extend(f["result_path"] for f in files if f.get("result_path"))
+            await self._conn.execute("DELETE FROM job_files WHERE job_id = ?", (jid,))
+        await self._conn.executemany("DELETE FROM jobs WHERE id = ?", [(jid,) for jid in job_ids])
+        await self._conn.commit()
+        return all_paths
 
     async def get_job_files(self, job_id: str) -> list[dict]:
         cursor = await self._conn.execute(
