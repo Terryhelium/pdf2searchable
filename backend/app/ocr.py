@@ -42,52 +42,8 @@ class PaddleOCRClient:
         ext = Path(file_path).suffix.lower()
         file_type = 0 if ext == ".pdf" else 1
 
-        if ext == ".pdf":
-            # 用 PyMuPDF 统一渲染 PDF 各页为 PNG（144 DPI），确保坐标对齐
-            import fitz
-            import io
-            src = fitz.open(file_path)
-            zoom = 144.0 / 72.0  # 2x
-            all_results = []
-            for pi in range(len(src)):
-                page = src[pi]
-                pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
-                img_data = pix.tobytes("png")
-
-                # 逐页发送给 PaddleOCR
-                b64 = base64.b64encode(img_data).decode()
-                payload = {"file": b64, "fileType": 1, "useLayoutDetection": True}
-                try:
-                    async with httpx.AsyncClient(timeout=self.timeout) as client:
-                        resp = await client.post(url, json=payload)
-                        if resp.is_error:
-                            raise ServiceError("PaddleOCR", resp.status_code, resp.text)
-                        result = resp.json()
-                    # 合并各页结果，修正宽高为实际渲染尺寸
-                    page_result = result.get("result", {}).get("layoutParsingResults", [])
-                    for pr in page_result:
-                        pruned = pr.get("prunedResult", {})
-                        pruned["width"] = pix.width
-                        pruned["height"] = pix.height
-                    all_results.extend(page_result)
-                except Exception as e:
-                    logger.warning("第%d页OCR失败: %s", pi, e)
-                    continue
-
-            page_count = len(src)
-            src.close()
-            file_type = 1
-            file_data = b""  # 不再发送原文件
-            result = {
-                "errorCode": 0,
-                "errorMsg": "Success",
-                "result": {"layoutParsingResults": all_results},
-            }
-            logger.info("PaddleOCR: PDF %d页全部渲染识别完成", page_count)
-            return result
-        else:
-            with open(file_path, "rb") as f:
-                file_data = f.read()
+        with open(file_path, "rb") as f:
+            file_data = f.read()
 
         payload = {
             "file": base64.b64encode(file_data).decode(),

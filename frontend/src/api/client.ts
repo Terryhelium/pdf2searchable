@@ -133,7 +133,7 @@ export async function deleteJob(jobId: string): Promise<void> {
 
 // 批量删除任务
 export async function batchDeleteJobs(jobIds: string[]): Promise<void> {
-  await api.delete('/jobs', { params: { job_ids: jobIds } });
+  await api.delete('/jobs', { params: { job_ids: jobIds.join(',') } });
 }
 
 // 健康检查

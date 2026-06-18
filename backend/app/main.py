@@ -227,16 +227,17 @@ async def delete_job(job_id: str):
 
 
 @app.delete("/api/jobs")
-async def batch_delete_jobs(job_ids: list[str] = Query(..., description="任务ID列表")):
+async def batch_delete_jobs(job_ids: str = Query(..., description="任务ID列表，逗号分隔")):
     """批量删除任务及其结果文件"""
     db = app.state.db
-    paths = await db.delete_jobs(job_ids)
+    ids = [jid.strip() for jid in job_ids.split(",") if jid.strip()]
+    paths = await db.delete_jobs(ids)
     for p in paths:
         try:
             os.remove(p)
         except Exception:
             pass
-    return {"deleted": job_ids, "count": len(job_ids)}
+    return {"deleted": ids, "count": len(ids)}
 
 
 # ── 文件下载 ──

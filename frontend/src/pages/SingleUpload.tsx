@@ -33,7 +33,7 @@ function SingleUpload() {
     setJobsLoading(true);
     try {
       const jobs = await listBatches();
-      setRecentJobs(jobs.slice(0, 10));
+      setRecentJobs(jobs.slice(0, 50));
     } catch {
       // ignore
     } finally {
