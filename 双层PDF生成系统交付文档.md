@@ -258,6 +258,29 @@ sequenceDiagram
 | GPU 显存 | Tesla T4 仅 15GB，PaddleOCR + MinerU 占用约 11.7GB，切换场景需停掉其他服务 |
 | 并发 | 单队列处理，后续请求排队等待 |
 | OCR 超时 | 多页文档处理时间较长，已配置 600 秒超时 |
+| 旋转扫描型 PDF | 对“横向底图 + `/Rotate 90/270`”的扫描件，双层 PDF 坐标仍需服务器环境继续验证 |
+| 长文本块叠字 | 验收单等密集文本块在自研叠字方案中更容易出现写入失败或文字层不完整 |
+
+### 10.1 2026-06-19 临时修正说明
+
+已在代码中落地一轮保守修正，等待服务器环境验证：
+
+- `backend/app/formatters/pdf.py`
+  - 增加旋转页坐标映射
+  - 修正长文本块 `insert_textbox()` 失败处理
+  - 增加 fallback 叠字和日志统计
+- `backend/app/tasks.py`
+  - 单文件失败时补充 `job_files.error_msg` 落库
+- 保留原始备份
+  - `backend/app/formatters/pdf.py.bak`
+  - `backend/app/tasks.py.bak`
+
+### 10.2 服务器验证顺序
+
+1. 先用 `宁波市档案馆终端安全管理系统验收文档.pdf` 验证 270° 单页样本。
+2. 再用 `14-2026_档案馆_终端安全管理_22000.pdf` 验证 90° 多页样本。
+3. 检查搜索高亮是否与原文对齐。
+4. 查看后端日志中的 `blocks / fitted / fallback` 统计，判断剩余问题属于坐标映射还是长文本块溢出。
 
 ---
 

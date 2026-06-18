@@ -37,8 +37,6 @@ async def process_single_file(db: Database, ocr: OCRProcessor,
     except Exception as e:
         logger.exception("File processing failed: %s", file_path)
         err_msg = str(e)
-        await db.add_job_files(job_id, [fname])
-        await db.update_file_status(job_id, fname, "failed", error_msg=err_msg)
         await db.update_job_status(job_id, "failed", processed_files=0, error_count=1)
 
 
