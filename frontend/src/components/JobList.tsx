@@ -22,6 +22,8 @@ const STATUS_MAP: Record<string, { color: string; text: string }> = {
   failed: { color: 'error', text: '失败' },
 };
 
+const PAGE_SIZE = 15;
+
 function JobList({ jobs, loading, onRefresh }: JobListProps) {
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailData, setDetailData] = useState<UploadResult | null>(null);
@@ -29,6 +31,7 @@ function JobList({ jobs, loading, onRefresh }: JobListProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
   const [batchMode, setBatchMode] = useState(false);
+  const [page, setPage] = useState(1);
 
   const handleView = async (jobId: string) => {
     setDetailLoading(true);
@@ -88,7 +91,7 @@ function JobList({ jobs, loading, onRefresh }: JobListProps) {
   return (
     <>
       <Card
-        title="任务记录"
+        title={`任务记录（${jobs.length}）`}
         size="small"
         extra={
           <Space>
@@ -122,9 +125,18 @@ function JobList({ jobs, loading, onRefresh }: JobListProps) {
           <List
             size="small"
             dataSource={jobs}
-            renderItem={(job) => {
+            pagination={{
+              current: page,
+              onChange: (p) => setPage(p),
+              pageSize: PAGE_SIZE,
+              showTotal: (total, range) => `${range[0]}-${range[1]} / 共 ${total} 条`,
+              size: 'small',
+              showSizeChanger: false,
+            }}
+            renderItem={(job, index) => {
               const s = STATUS_MAP[job.status] || { color: 'default', text: job.status };
               const checked = selectedIds.has(job.job_id);
+              const rowNum = (page - 1) * PAGE_SIZE + index + 1;
               return (
                 <List.Item
                   actions={[
@@ -147,6 +159,9 @@ function JobList({ jobs, loading, onRefresh }: JobListProps) {
                   ]}
                 >
                   {batchMode && <Checkbox checked={checked} onChange={() => toggleSelect(job.job_id)} />}
+                  <Typography.Text type="secondary" style={{ fontSize: 12, minWidth: 28, textAlign: 'right', display: 'inline-block' }}>
+                    {rowNum}
+                  </Typography.Text>
                   <List.Item.Meta
                     avatar={<UploadOutlined />}
                     title={
