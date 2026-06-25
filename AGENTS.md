@@ -30,9 +30,10 @@
 
 ## 依赖
 
-- **后端**: Python 3.11+, FastAPI, uvicorn, aiosqlite, pypdf, Pillow, img2pdf, httpx
+- **后端**: Python 3.11+, FastAPI, uvicorn, aiosqlite, pypdf, Pillow, img2pdf, httpx, ocrmypdf, ocrmypdf-paddleocr
 - **前端**: React 19, Ant Design 6, Vite 8, TypeScript 6, Axios
-- **外部 OCR**: PaddleOCR (10.19.26.153:8080) + MinerU (10.19.26.153:8000)
+- **外部 OCR**: PaddleOCR-VL (10.19.26.153:8080) + MinerU (10.19.26.153:8000)
+- **可搜索 PDF**: OCRmyPDF + PaddleOCR 插件（148 容器内 CPU / 153 GPU 服务待启用）
 
 ## 开发
 
@@ -142,3 +143,99 @@ docker compose up -d --build
 3. 查看后端日志中的 `blocks / fitted / fallback` 统计。
 4. 对照桌面 `验收文档_完美版.pdf` 的行为，判断当时是否使用了“先转正 / 先重建页面”的路线。
 5. 若仍异常，再抓 Paddle 原始返回中的 `prunedResult.width/height`、`block_bbox` 与实际页尺寸做对照。
+
+## 2026-06-22 最新交接
+
+- 生产环境：
+  - 应用服务器：`10.19.26.148`
+  - OCR 服务器：`10.19.26.153`
+  - 项目目录：`/opt/pdf2searchable-v2`
+- 生产容器：
+  - `pdf2searchable-backend`
+  - `pdf2searchable-nginx`
+- 这次只动过 `pdf2searchable` 自己的前端 / nginx / backend，不要碰 OCR 服务器其它服务。
+
+### 当前前端状态
+
+- UI 已做过一轮大改并已部署过生产。
+- 主题切换仍有问题：
+  - 用户反馈右上角主题控件在生产环境下仍不稳定。
+  - 当前怀疑点是 Antd 主题切换和自定义 CSS 变量切换没有完全同步。
+- 左上角品牌名不应再使用 `PDF2Searchable`。
+- 下次建议直接改成：
+  - 主名称：`档案数字化平台`
+  - 副标题：`OCR · 转换 · 校核`
+
+### 当前 PDF 重点问题
+
+- 问题样本：
+  - 源文件：`14-2026_档案馆_终端安全管理_22000.pdf`
+  - 生成文件：`4834c41d50094fd3b22172d931443fce_14-2026_档案馆_终端安全管理_22000_searchable.pdf`
+- 生产卷路径已确认：
+  - 源文件：`/var/lib/docker/volumes/pdf2searchable-v2_uploads/_data/4834c41d50094fd3b22172d931443fce_14-2026_档案馆_终端安全管理_22000.pdf`
+  - 输出文件：`/var/lib/docker/volumes/pdf2searchable-v2_uploads/_data/results/pdf/4834c41d50094fd3b22172d931443fce_14-2026_档案馆_终端安全管理_22000_searchable.pdf`
+- 已确认：
+  - 源 PDF 三页全部 `Rotate = 90`
+  - 源 PDF 无原生文字层
+  - 输出 PDF 三页仍保持 `Rotate = 90`
+  - 输出 PDF 文字层存在：
+    - page1 `1138`
+    - page2 `1017`
+    - page3 `849`
+- 已抓到 Paddle 第 1 页原始块框，框本身大体合理：
+  - `doc_title [391, 159, 828, 203] 终端安全管理系统采购合同`
+  - `table [171, 600, 1039, 1278] ...`
+- 当前更强的判断：
+  - 问题不再像“Paddle 坐标完全错了”
+  - 更像“在仍然带 `/Rotate=90` 的扫描页上直接按块叠字，导致搜索高亮和实际显示不完全贴合”
+
+### 下次优先实现
+
+在 `backend/app/formatters/pdf.py` 做窄范围特判：
+
+1. 只对 `rotation in {90, 270}` 且无原生文字层的扫描页生效。
+2. 先把页面转正重建为 `Rotate = 0` 的输出页。
+3. 再按转正后的坐标叠加隐藏文字层。
+4. 正常 PDF 继续走当前“原 PDF 上叠字”的主路线。
+
+## 2026-06-25 最新交接
+
+### 可搜索PDF坐标对齐问题 — 已解决
+
+采用 **OCRmyPDF + PaddleOCR 插件**方案，搜索高亮偏移问题已修复。
+
+关键文件：
+- `backend/app/formatters/pdf.py` — 调用 OCRmyPDF 处理 PDF 格式
+- `backend/app/ocr.py` — PDF 格式不调用远程 PaddleOCR API（由 OCRmyPDF 内部处理）
+- `ocrmypdf-gpu-service/` — 153 GPU 服务的 Dockerfile 和 HTTP 服务代码
+- `SEARCHABLE_PDF_ISSUE.md` — 完整技术分析文档
+
+### 服务器状态
+
+**148（应用服务器）**：
+- `pdf2searchable-backend` — 已安装 ocrmypdf + ocrmypdf-paddleocr（CPU 版）
+- `pdf2searchable-nginx` — 前端代理
+- PDF 处理走本地 CPU OCRmyPDF（3 页约 2-3 分钟）
+
+**153（算力服务器）**：
+- `paddleocr-vl-api` + `paddleocr-vlm-server` — PaddleOCR-VL（:8080，用于 JSON 格式）
+- `mineru-api` — MinerU（:8000，用于 TXT/MD 格式）
+- `rerank-service` — RAG 服务
+- `ocrmypdf-gpu` — OCRmyPDF GPU 服务（:8090，待修复 GPU 兼容性）
+
+### GPU 加速待办
+
+153 的 `ocrmypdf-gpu` 容器内执行：
+```bash
+pip install paddlepaddle-gpu==3.2.2 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
+docker restart ocrmypdf-gpu
+```
+
+然后修改 148 `pdf.py` 调用 153 的 8090 端口。
+
+### 下次进入会话第一步
+
+1. 读 `todo.md` 和 `SEARCHABLE_PDF_ISSUE.md`
+2. 在 153 容器内装 paddlepaddle-gpu 3.2.2（cu126）
+3. 测试 GPU 处理速度
+4. 改 148 后端调用 153 服务
