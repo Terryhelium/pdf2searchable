@@ -221,21 +221,28 @@ docker compose up -d --build
 - `paddleocr-vl-api` + `paddleocr-vlm-server` — PaddleOCR-VL（:8080，用于 JSON 格式）
 - `mineru-api` — MinerU（:8000，用于 TXT/MD 格式）
 - `rerank-service` — RAG 服务
-- `ocrmypdf-gpu` — OCRmyPDF GPU 服务（:8090，待修复 GPU 兼容性）
+- `ocrmypdf-gpu` — OCRmyPDF GPU 服务（:8090，PaddlePaddle 3.2.2 + GPU:0 已就绪）
 
-### GPU 加速待办
+### GPU 加速已完成 ✓
 
-153 的 `ocrmypdf-gpu` 容器内执行：
-```bash
-pip install paddlepaddle-gpu==3.2.2 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
-docker restart ocrmypdf-gpu
-```
+153 的 `ocrmypdf-gpu` 容器已装好 `paddlepaddle-gpu==3.2.2`（cu126 源），GPU:0 验证通过。
 
-然后修改 148 `pdf.py` 调用 153 的 8090 端口。
+### GPU 效果验证结果
 
-### 下次进入会话第一步
+测试样本：`22000`（3 页 Rotate=90 纯扫描）
 
-1. 读 `todo.md` 和 `SEARCHABLE_PDF_ISSUE.md`
-2. 在 153 容器内装 paddlepaddle-gpu 3.2.2（cu126）
-3. 测试 GPU 处理速度
-4. 改 148 后端调用 153 服务
+- **GPU + rotate-pages + deskew**：~50 秒，高亮准确，第一页斜的被摆正
+- **GPU 无 rotate**：~26 秒，高亮准确，但第一页保持斜的
+- **CPU 版**：~2 分 43 秒，效果同 GPU
+
+结论：保留 `--rotate-pages --deskew`，视觉效果更好。
+
+输出文件在项目根目录：
+- `22_gpu_final.pdf` — GPU 版（含 rotate-pages + deskew）
+- `22_gpu_norotate.pdf` — GPU 版（无 rotate-pages）
+
+### 明天开工第一步
+
+1. 改 `backend/app/formatters/pdf.py` — 把本地 ocrmypdf 命令行改为 HTTP POST 到 `http://10.19.26.153:8090/ocr`
+2. 部署到 148 容器
+3. 端到端测试：网页上传 → GPU 处理 → 下载可搜索 PDF

@@ -59,16 +59,54 @@ docker restart ocrmypdf-gpu
 
 - PaddlePaddle 3.2.2 + GPU:0 验证通过
 - 153 的 CUDA 12.2 向下兼容 CUDA 12.6
-- 3 页 PDF 处理约 50 秒（含 --rotate-pages --deskew）
 - Dockerfile 已更新，重建时自动装 cu126 版本
+
+### GPU 效果验证（2026-06-25）
+
+测试样本：`14-2026_档案馆_终端安全管理_22000.pdf`（3 页，Rotate=90，纯扫描）
+
+| 版本 | rotate-pages | deskew | 耗时 | 字符分布 | 搜索效果 |
+|------|-------------|--------|------|----------|----------|
+| CPU 版（148 容器） | ✓ | ✓ | ~2m43s | 770/863/638 | 高亮准确 ✓ |
+| GPU 版（153 服务） | ✓ | ✓ | ~50s | 767/862/648 | 高亮准确 ✓ |
+| GPU 版（无 rotate） | ✗ | ✗ | ~26s | 类似 | 高亮准确 ✓ |
+
+**结论**：
+- 搜索高亮效果：有无 rotate-pages 无区别，都准确
+- 视觉效果：有 rotate-pages 时第一页（原图有点斜的）会被摆正，看着舒服
+- 建议保留 `--rotate-pages --deskew`，牺牲一点速度换视觉质量
+
+输出文件：
+- `22_gpu_final.pdf` — GPU 版（含 rotate-pages + deskew）
+- `22_gpu_norotate.pdf` — GPU 版（无 rotate-pages）
 
 ### 148 后端改造 — 待完成
 
 148 后端需要改为调用 153 的 OCRmyPDF GPU 服务（8090 端口），而不是本地 CPU 处理。
 
-修改 `backend/app/formatters/pdf.py`：
-- 把 `ocrmypdf` 命令行调用改为 HTTP POST 到 `http://10.19.26.153:8090/ocr`
-- 传入 PDF 文件，接收处理后的可搜索 PDF
+**具体改动**：`backend/app/formatters/pdf.py`
+
+把当前的本地命令行调用：
+```python
+cmd = ["ocrmypdf", "--plugin", "ocrmypdf_paddleocr", ...]
+proc = await asyncio.create_subprocess_exec(*cmd, ...)
+```
+
+改为 HTTP POST 到 153：
+```python
+async with httpx.AsyncClient(timeout=300) as client:
+    resp = await client.post(
+        "http://10.19.26.153:8090/ocr",
+        files={"file": (input_path.name, content, "application/pdf")},
+    )
+    output_path.write_bytes(resp.content)
+```
+
+**明天开工步骤**：
+1. 改 `backend/app/formatters/pdf.py` 调 153 的 8090 服务
+2. 部署到 148 容器
+3. 端到端测试：网页上传 → GPU 处理 → 下载可搜索 PDF
+4. 验证搜索高亮和视觉效果
 
 ### 专家建议记录
 
