@@ -18,18 +18,20 @@ ENV PATH="/opt/conda/bin:$PATH"
 RUN conda create -n ocr python=3.11 -y
 ENV PATH="/opt/conda/envs/ocr/bin:$PATH"
 
-# 分步安装，确保每步成功
+# ocrmypdf + 插件（--no-deps 避免拉 CPU paddlepaddle）
 RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com \
-    ocrmypdf img2pdf pluggy pillow
+    ocrmypdf \
+    ocrmypdf-paddleocr --no-deps \
+    paddleocr \
+    pluggy \
+    pillow \
+    fastapi \
+    uvicorn \
+    python-multipart
 
-RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com \
-    ocrmypdf-paddleocr --no-deps
-
-RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com \
-    paddleocr fastapi uvicorn python-multipart
-
+# paddlepaddle-gpu 3.2.2（CUDA 12.6，兼容 153 的 CUDA 12.2）
 RUN pip install --no-cache-dir \
-    paddlepaddle-gpu==2.6.1.post117 -i https://www.paddlepaddle.org.cn/packages/stable/cu117/
+    paddlepaddle-gpu==3.2.2 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
 
 WORKDIR /app
 COPY server.py .
