@@ -38,7 +38,7 @@ class SearchablePDFFormatter(BaseFormatter):
     async def _format_with_ocrmypdf(input_path: Path, output_path: Path) -> list[Path]:
         cmd = [
             "ocrmypdf",
-            "--plugin", "ocrmypdf_paddleocr_remote",
+            "--plugin", "ocrmypdf_paddleocr",
             "-l", OCRMYPDF_LANG,
             "--force-ocr",
             "--output-type", "pdf",
