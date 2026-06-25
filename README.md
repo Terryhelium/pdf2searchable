@@ -13,7 +13,9 @@
 ## 功能特性
 
 - **多格式输出** — 一次处理同时生成 PDF / TIFF / JPEG / TXT / MD / JSON，按格式分目录存放
-- **双引擎 OCR** — PaddleOCR（文字检测 + 精确坐标）+ MinerU（文档结构解析）
+- **可搜索 PDF** — OCRmyPDF + PaddleOCR 插件，旋转扫描件坐标对齐准确
+- **双引擎 OCR** — PaddleOCR-VL（文字检测 + 精确坐标）+ MinerU（文档结构解析）
+- **GPU 加速** — 153 算力服务器 PaddlePaddle GPU，可搜索 PDF 生成速度提升
 - **仪表盘** — 处理统计概览、今日任务量、成功率
 - **批量处理** — 指定源目录，后台逐文件处理，自动记录进度
 - **格式按需调用** — 仅对请求的格式调用对应的 OCR 引擎，TIFF/JPEG 无需 OCR

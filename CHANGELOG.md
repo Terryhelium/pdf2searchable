@@ -1,5 +1,28 @@
 # 更新日志
 
+## [2.1.0] - 2026-06-25
+
+### 重大变更
+- 可搜索 PDF 生成引擎：自研方案 → OCRmyPDF + PaddleOCR 插件
+- 坐标对齐：旋转扫描件搜索高亮偏移问题彻底解决
+- PDF 格式不再调用远程 PaddleOCR API，由 OCRmyPDF 内部处理
+
+### 新增
+- OCRmyPDF + PaddleOCR 插件集成（坐标对齐有保障）
+- 153 GPU 服务：`ocrmypdf-gpu` 容器（端口 8090）
+- PaddlePaddle 3.2.2 GPU（CUDA 12.6）支持
+- `SEARCHABLE_PDF_ISSUE.md` 技术分析文档
+
+### 技术细节
+- OCRmyPDF 负责坐标对齐（同一张渲染图做 OCR 和底图）
+- PaddleOCR 负责中文识别质量
+- 旋转页面自动处理，输出 rotation=0
+- 153 容器：Python 3.11 + OCRmyPDF 17.7.0 + PaddleOCR 3.7.0 + PaddlePaddle GPU 3.2.2
+
+### 性能
+- CPU 版（148 容器内）：3 页 PDF 约 2-3 分钟
+- GPU 版（153 服务）：3 页 PDF 约 50 秒（含 rotate-pages + deskew）
+
 ## [2.0.0] - 2026-06-18
 
 ### 重大变更

@@ -8,9 +8,16 @@
 graph TB
     Browser["Browser React + Antd"] --> Nginx["Nginx (:9010)"]
     Nginx -->|API| Backend["FastAPI (:8000)"]
-    Backend -->|OCR| Paddle["PaddleOCR :8080"]
-    Backend -->|Parse| Mineru["MinerU :8000"]
+    Backend -->|PDF格式| OCRmyPDF["OCRmyPDF + PaddleOCR 插件"]
+    Backend -->|TXT/MD| Mineru["MinerU :8000"]
+    Backend -->|JSON| Paddle["PaddleOCR-VL :8080"]
     Backend --> DB[("SQLite jobs.db")]
+
+    subgraph "153 算力服务器"
+        OCRmyPDF
+        Paddle
+        Mineru
+    end
 
     classDef browser fill:#e3f2fd,stroke:#1565c0
     classDef nginx fill:#fff3e0,stroke:#e65100
@@ -21,7 +28,7 @@ graph TB
     class Browser browser
     class Nginx nginx
     class Backend backend
-    class Paddle,Mineru ext
+    class Paddle,Mineru,OCRmyPDF ext
     class DB db
 ```
 
@@ -33,7 +40,8 @@ graph TB
 | UI 组件库 | Ant Design 6 | 6 种主题色 + 深色模式 |
 | 后端框架 | FastAPI 0.136 + Python 3.11 | uvicorn 运行 |
 | 数据库 | SQLite (aiosqlite) | 单机部署，无需额外服务 |
-| OCR 引擎 | PaddleOCR + MinerU | 独立 HTTP 服务，按需调用 |
+| 可搜索 PDF | OCRmyPDF + PaddleOCR 插件 | 坐标对齐有保障，GPU 加速 |
+| OCR 引擎 | PaddleOCR-VL + MinerU | 独立 HTTP 服务，按需调用 |
 | 图像处理 | Pillow / pypdf / img2pdf | 格式转换和 PDF 生成 |
 | 部署 | Docker Compose + Nginx | 一键启动 |
 

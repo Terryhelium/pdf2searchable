@@ -47,21 +47,20 @@
 - HTTP 服务 `server.py` 在 8090 端口
 - **问题**：PaddlePaddle 2.6.1 和 PaddleOCR 3.x 不兼容，当前只能用 CPU
 
-### GPU 加速 — 待解决
+### GPU 加速 — 已完成 ✓
 
-**根因**：基础镜像 `paddle:2.6.1-gpu-cuda11.7` 的 PaddlePaddle 版本太旧
+**解决方案**：在 153 容器内装 `paddlepaddle-gpu==3.2.2`（cu126 源）
 
-**解决方案**（已确认可行）：
 ```bash
-# 在 153 ocrmypdf-gpu 容器内执行
+# 已在 153 ocrmypdf-gpu 容器内执行完毕
 pip install paddlepaddle-gpu==3.2.2 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
+docker restart ocrmypdf-gpu
 ```
 
-- CUDA 12.6 的 paddlepaddle-gpu 3.2.2 可用
+- PaddlePaddle 3.2.2 + GPU:0 验证通过
 - 153 的 CUDA 12.2 向下兼容 CUDA 12.6
-- 装完后重启容器即可
-
-**预期效果**：GPU 加速后 3 页 PDF 预计 10-20 秒（当前 CPU 约 2-3 分钟）
+- 3 页 PDF 处理约 50 秒（含 --rotate-pages --deskew）
+- Dockerfile 已更新，重建时自动装 cu126 版本
 
 ### 148 后端改造 — 待完成
 
