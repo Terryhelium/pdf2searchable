@@ -40,14 +40,16 @@ class PaddleOCRClient:
         logger.info("PaddleOCR: POST %s (file=%s)", url, file_path)
 
         ext = Path(file_path).suffix.lower()
-        file_type = 0 if ext == ".pdf" else 1
+
+        if ext == ".pdf":
+            return await self._ocr_pdf_pages(file_path, url)
 
         with open(file_path, "rb") as f:
             file_data = f.read()
 
         payload = {
             "file": base64.b64encode(file_data).decode(),
-            "fileType": file_type,
+            "fileType": 1,
             "useLayoutDetection": True,
         }
 
@@ -64,6 +66,54 @@ class PaddleOCRClient:
             raise ServiceError("PaddleOCR", 0, "timeout")
         except httpx.ConnectError:
             raise ServiceError("PaddleOCR", 0, "connection refused")
+
+    async def _ocr_pdf_pages(self, file_path: str, url: str) -> dict:
+        """逐页渲染 PDF 为 PNG 发给 PaddleOCR，同时保留渲染图做底图。"""
+        import fitz
+
+        src = fitz.open(file_path)
+        dpi = 300
+        zoom = dpi / 72.0
+        all_results = []
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            for pi in range(len(src)):
+                page = src[pi]
+                pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+                img_data = pix.tobytes("png")
+
+                b64 = base64.b64encode(img_data).decode()
+                payload = {"file": b64, "fileType": 1, "useLayoutDetection": True}
+                try:
+                    resp = await client.post(url, json=payload)
+                    if resp.is_error:
+                        logger.warning("PaddleOCR page %d error: %s", pi, resp.status_code)
+                        continue
+                    result = resp.json()
+                    if result.get("errorCode", 0) != 0:
+                        logger.warning("PaddleOCR page %d: %s", pi, result.get("errorMsg", ""))
+                        continue
+
+                    page_results = result.get("result", {}).get("layoutParsingResults", [])
+                    for pr in page_results:
+                        pruned = pr.get("prunedResult", {})
+                        pruned["width"] = pix.width
+                        pruned["height"] = pix.height
+                        pruned["_pixmap_png"] = img_data
+                    all_results.extend(page_results)
+                except Exception as e:
+                    logger.warning("PaddleOCR page %d failed: %s", pi, e)
+                    continue
+
+        page_count = len(src)
+        src.close()
+        logger.info("PaddleOCR: PDF %d pages rendered at %d DPI", page_count, dpi)
+
+        return {
+            "errorCode": 0,
+            "errorMsg": "Success",
+            "result": {"layoutParsingResults": all_results},
+        }
 
     async def health(self) -> bool:
         try:
@@ -179,7 +229,7 @@ class OCRProcessor:
     """协调 OCR 引擎调用 + 多格式输出"""
 
     _ENGINE_REQUIREMENTS = {
-        "pdf": {"paddleocr"},        # 精确文字坐标做 PDF 文字覆盖层
+        "pdf": set(),                # OCRmyPDF + 远程 PaddleOCR 插件内部处理
         "md": {"mineru"},            # MinerU 结构化 markdown 输出
         "txt": {"mineru"},           # MinerU 阅读顺序提取纯文本
         "json": {"paddleocr", "mineru"},  # 全量数据
